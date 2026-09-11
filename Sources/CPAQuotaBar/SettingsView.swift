@@ -53,6 +53,12 @@ struct SettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(model.isSaving)
+            Button { model.quit() } label: {
+                Image(systemName: "power")
+            }
+            .buttonStyle(GlassIconButtonStyle())
+            .focusable(false)
+            .help("退出 CPA Quota Bar")
         }
         .padding(.horizontal, 16)
         .frame(height: 58)

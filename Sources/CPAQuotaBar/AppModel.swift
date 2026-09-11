@@ -4,6 +4,23 @@ import CPAQuotaCore
 #endif
 import Foundation
 
+struct UpdateInfo: Sendable, Equatable {
+    let version: String
+    let releaseURL: URL
+    let assetURL: URL?
+    let assetName: String?
+}
+
+enum UpdateState: Equatable {
+    case idle
+    case checking
+    case upToDate
+    case available(UpdateInfo)
+    case downloading(UpdateInfo)
+    case downloaded(URL)
+    case failed(String)
+}
+
 enum ConnectionTestState: Equatable {
     case idle
     case testing
@@ -24,6 +41,8 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var connectionTestState: ConnectionTestState = .idle
     @Published var isShowingCachedFallback = false
+    @Published private(set) var updateState: UpdateState = .idle
+    @Published private(set) var isPoolLoading = false
 
     private var pollingTask: Task<Void, Never>?
     private var currentRefreshTask: Task<Void, Never>?
@@ -75,7 +94,11 @@ final class AppModel: ObservableObject {
             isShowingCachedFallback = true
         }
 
-        Task { [weak self] in self?.start() }
+        Task { [weak self] in
+            self?.start()
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await self?.checkForUpdates()
+        }
     }
 
     deinit {
@@ -175,24 +198,24 @@ final class AppModel: ObservableObject {
         }
         lastActivitySnapshot = nil
 
-        // 3. 2s 防抖延迟：短时间频繁切换时不发网络请求；用户停留在当前池超过 2s 且该池缓存过期时才拉取
-        poolSwitchDebounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled, let self else { return }
-
-            let lastRefresh = self.lastQuotaRefreshAt[pool]
-            let activeInterval = Self.durationSeconds(self.monitorSettings.refreshInterval, fallback: 60)
-            let isStale = lastRefresh.map { Date().timeIntervalSince($0) >= Double(activeInterval) } ?? true
-            if isStale {
-                self.currentRefreshTask = Task { [weak self] in
-                    await self?.loadStatus(for: pool)
-                }
+        // 3. 立即查询目标账号池。切换时不再等待固定防抖时间，避免账号池区域暂时无法展开。
+        let lastRefresh = lastQuotaRefreshAt[pool]
+        let activeInterval = Self.durationSeconds(monitorSettings.refreshInterval, fallback: 60)
+        let isStale = lastRefresh.map { Date().timeIntervalSince($0) >= Double(activeInterval) } ?? true
+        if isStale {
+            isPoolLoading = true
+            currentRefreshTask = Task { [weak self] in
+                await self?.loadStatus(for: pool)
             }
         }
     }
 
     func loadStatus(for pool: AccountPoolType? = nil) async {
         let targetPool = pool ?? selectedPool
+        if targetPool == selectedPool { isPoolLoading = true }
+        defer {
+            if targetPool == selectedPool { isPoolLoading = false }
+        }
         guard !managementKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             if targetPool == selectedPool {
                 summary = nil
@@ -286,6 +309,101 @@ final class AppModel: ObservableObject {
     }
 
     func quit() { NSApplication.shared.terminate(nil) }
+
+    func checkForUpdates() async {
+        guard updateState != .checking else { return }
+        updateState = .checking
+        do {
+            var request = URLRequest(url: Self.latestReleaseURL)
+            request.setValue("CPAQuotaBar/0.4.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            let version = Self.normalizedVersion(release.tagName)
+            let current = Self.normalizedVersion(Self.currentVersion)
+            guard Self.compareVersions(version, current) == .orderedDescending else {
+                updateState = .upToDate
+                return
+            }
+            let asset = release.assets.first(where: { $0.name.hasSuffix("macos-arm64.zip") })
+            updateState = .available(UpdateInfo(
+                version: version,
+                releaseURL: release.htmlURL,
+                assetURL: asset?.browserDownloadURL,
+                assetName: asset?.name
+            ))
+        } catch is CancellationError {
+            updateState = .idle
+        } catch {
+            updateState = .failed(error.localizedDescription)
+        }
+    }
+
+    func downloadUpdate(_ info: UpdateInfo) async {
+        guard let assetURL = info.assetURL, let assetName = info.assetName else {
+            NSWorkspace.shared.open(info.releaseURL)
+            return
+        }
+        updateState = .downloading(info)
+        do {
+            let (temporaryURL, response) = try await URLSession.shared.download(from: assetURL)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(assetName)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+            updateState = .downloaded(destination)
+            NSWorkspace.shared.open(destination)
+        } catch is CancellationError {
+            updateState = .available(info)
+        } catch {
+            updateState = .failed(error.localizedDescription)
+        }
+    }
+
+    private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Joenothing-lst/CPAQuotaBar/releases/latest")!
+    private static let currentVersion = "0.4.0"
+
+    private struct GitHubRelease: Decodable {
+        let tagName: String
+        let htmlURL: URL
+        let assets: [GitHubAsset]
+
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case htmlURL = "html_url"
+            case assets
+        }
+    }
+
+    private struct GitHubAsset: Decodable {
+        let name: String
+        let browserDownloadURL: URL
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
+    }
+
+    private static func normalizedVersion(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "^v", with: "", options: .regularExpression)
+    }
+
+    private static func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        let left = lhs.split(separator: ".").map { Int($0) ?? 0 }
+        let right = rhs.split(separator: ".").map { Int($0) ?? 0 }
+        for index in 0..<max(left.count, right.count) {
+            let a = index < left.count ? left[index] : 0
+            let b = index < right.count ? right[index] : 0
+            if a != b { return a < b ? .orderedAscending : .orderedDescending }
+        }
+        return .orderedSame
+    }
 
     private var client: CPAClient { CPAClient(address: address, managementKey: managementKey) }
 

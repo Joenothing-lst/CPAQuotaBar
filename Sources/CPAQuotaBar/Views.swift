@@ -171,6 +171,8 @@ private struct DashboardView: View {
                 summaryCard(summary)
                 counters(summary)
                 accountDisclosure(summary)
+            } else if model.isPoolLoading {
+                loadingPool
             } else {
                 unavailable
             }
@@ -284,6 +286,27 @@ private struct DashboardView: View {
             .buttonStyle(GlassIconButtonStyle())
             .focusable(false)
             .help("设置")
+
+            Button { model.quit() } label: {
+                Image(systemName: "power")
+            }
+            .buttonStyle(GlassIconButtonStyle())
+            .focusable(false)
+            .help("退出 CPA Quota Bar")
+
+            switch model.updateState {
+            case let .available(info):
+                Button { Task { await model.downloadUpdate(info) } } label: {
+                    Image(systemName: "arrow.down.circle.fill")
+                }
+                .buttonStyle(GlassIconButtonStyle())
+                .focusable(false)
+                .help("发现新版本 \(info.version)，点击下载")
+            case let .downloading(info):
+                ProgressView().controlSize(.small).help("正在下载 \(info.version)")
+            default:
+                EmptyView()
+            }
         }
     }
 
@@ -448,6 +471,21 @@ private struct DashboardView: View {
         .frame(maxWidth: .infinity, minHeight: 190)
         .padding()
         .quotaGlass(cornerRadius: 24, tint: (model.managementKey.isEmpty ? AppPalette.warning : Color.accentColor).opacity(0.04))
+    }
+
+    private var loadingPool: some View {
+        VStack(spacing: 10) {
+            ProgressView().controlSize(.regular)
+            Text("正在加载 \(model.selectedPool.displayName) 账号池…")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("账号列表加载完成后会自动显示")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 190)
+        .padding()
+        .quotaGlass(cornerRadius: 24, tint: Color.accentColor.opacity(0.04))
     }
 }
 
