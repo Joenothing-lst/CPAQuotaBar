@@ -153,6 +153,13 @@ struct RootView: View {
         .onAppear { preferredHeight(panelHeight) }
         .onChange(of: showingSettings) { _, _ in preferredHeight(panelHeight) }
         .onChange(of: model.sortedAccounts.count) { _, _ in preferredHeight(panelHeight) }
+        .onChange(of: model.selectedPool) { _, _ in
+            // 没有目标池缓存时，网络返回后直接展示账号池，避免用户还要再次点击展开。
+            if model.summary == nil {
+                accountsExpanded = true
+            }
+            preferredHeight(panelHeight)
+        }
     }
 }
 
