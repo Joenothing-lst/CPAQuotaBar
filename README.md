@@ -2,7 +2,7 @@
 
 原生 macOS 菜单栏额度监控工具，通过 CLIProxyAPI（CPA）的管理接口查看 OpenAI / Codex、Gemini / Antigravity 和 Claude 账号的剩余额度。
 
-使用 SwiftUI 与 AppKit 构建，支持账号池切换、双窗口额度圆环、请求统计和按阈值自动禁用账号。应用直接连接 CPA，无需安装额外的额度插件，也没有第三方 Swift 包依赖。
+采用原生 macOS 界面，支持账号池切换、双窗口额度圆环、请求统计和按阈值自动禁用账号。应用直接连接 CPA，无需安装额外的额度插件，也没有第三方 Swift 包依赖。
 
 **当前版本：0.4.0 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
 
@@ -129,7 +129,7 @@ auth-index=20
 
 ## 更新与卸载
 
-应用启动后会自动检查 GitHub Releases。发现新版本时，主面板或设置页右上角会出现下载按钮；点击后应用会下载对应的 macOS 安装包并在 Finder 中打开，按提示用新版应用替换旧版本即可。检查失败不会影响当前版本运行。
+应用启动后会自动检查 GitHub Releases，并每天检查一次。发现新版本时，主面板或设置页右上角会出现下载按钮；点击后应用会下载、校验并安装对应的 macOS 应用，然后自动重启到新版本。检查失败不会影响当前版本运行。
 
 如果应用长期离线，也可以从 [Releases](https://github.com/Joenothing-lst/CPAQuotaBar/releases) 手动下载更新。更新时退出正在运行的 CPAQuotaBar，用新版 `.app` 覆盖旧应用，再重新打开。连接信息和本地策略会保留。
 

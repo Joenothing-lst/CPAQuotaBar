@@ -88,7 +88,9 @@ struct RootView: View {
 
     private var panelHeight: CGFloat {
         if showingSettings { return 700 }
-        guard model.summary != nil else { return 340 }
+        if model.summary == nil {
+            return model.isPoolLoading && accountsExpanded ? 430 : 340
+        }
         return dashboardHeight(accountsExpanded: accountsExpanded)
     }
 
@@ -153,6 +155,7 @@ struct RootView: View {
         .onAppear { preferredHeight(panelHeight) }
         .onChange(of: showingSettings) { _, _ in preferredHeight(panelHeight) }
         .onChange(of: model.sortedAccounts.count) { _, _ in preferredHeight(panelHeight) }
+        .onChange(of: model.isPoolLoading) { _, _ in preferredHeight(panelHeight) }
         .onChange(of: model.selectedPool) { _, _ in
             // 没有目标池缓存时，网络返回后直接展示账号池，避免用户还要再次点击展开。
             if model.summary == nil {
@@ -302,6 +305,8 @@ private struct DashboardView: View {
             .help("退出 CPA Quota Bar")
 
             switch model.updateState {
+            case .checking:
+                ProgressView().controlSize(.small).help("正在检查更新")
             case let .available(info):
                 Button { Task { await model.downloadUpdate(info) } } label: {
                     Image(systemName: "arrow.down.circle.fill")
@@ -311,6 +316,13 @@ private struct DashboardView: View {
                 .help("发现新版本 \(info.version)，点击下载")
             case let .downloading(info):
                 ProgressView().controlSize(.small).help("正在下载 \(info.version)")
+            case let .failed(message):
+                Button { Task { await model.checkForUpdates() } } label: {
+                    Image(systemName: "arrow.clockwise.circle")
+                }
+                .buttonStyle(GlassIconButtonStyle())
+                .focusable(false)
+                .help("更新检查失败：\(message)。点击重试")
             default:
                 EmptyView()
             }
@@ -481,18 +493,31 @@ private struct DashboardView: View {
     }
 
     private var loadingPool: some View {
-        VStack(spacing: 10) {
-            ProgressView().controlSize(.regular)
-            Text("正在加载 \(model.selectedPool.displayName) 账号池…")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text("账号列表加载完成后会自动显示")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+        VStack(spacing: 0) {
+            Button(action: toggleAccounts) {
+                HStack {
+                    Label("\(model.selectedPool.displayName) 账号池", systemImage: "person.2.fill")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    ProgressView().controlSize(.small)
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .rotationEffect(.degrees(accountsExpanded ? 180 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .padding(13)
+            if accountsExpanded {
+                Divider().opacity(0.45)
+                Text("正在加载账号列表…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 60)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 190)
-        .padding()
-        .quotaGlass(cornerRadius: 24, tint: Color.accentColor.opacity(0.04))
+        .quotaGlass(cornerRadius: 18, tint: Color.accentColor.opacity(0.04))
     }
 }
 

@@ -9,6 +9,7 @@ struct UpdateInfo: Sendable, Equatable {
     let releaseURL: URL
     let assetURL: URL?
     let assetName: String?
+    let digest: String?
 }
 
 enum UpdateState: Equatable {
@@ -47,6 +48,7 @@ final class AppModel: ObservableObject {
     private var pollingTask: Task<Void, Never>?
     private var currentRefreshTask: Task<Void, Never>?
     private var poolSwitchDebounceTask: Task<Void, Never>?
+    private var updatePollingTask: Task<Void, Never>?
     private var panelVisible = false
     private var authenticationPaused = false
     private var managedHolds: [String: Date]
@@ -94,10 +96,15 @@ final class AppModel: ObservableObject {
             isShowingCachedFallback = true
         }
 
-        Task { [weak self] in
+        updatePollingTask = Task { [weak self] in
             self?.start()
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             await self?.checkForUpdates()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 24 * 60 * 60 * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.checkForUpdates()
+            }
         }
     }
 
@@ -105,6 +112,7 @@ final class AppModel: ObservableObject {
         pollingTask?.cancel()
         currentRefreshTask?.cancel()
         poolSwitchDebounceTask?.cancel()
+        updatePollingTask?.cancel()
     }
 
     var connected: Bool { summary != nil && (!isShowingCachedFallback || errorMessage == nil) }
@@ -333,7 +341,8 @@ final class AppModel: ObservableObject {
                 version: version,
                 releaseURL: release.htmlURL,
                 assetURL: asset?.browserDownloadURL,
-                assetName: asset?.name
+                assetName: asset?.name,
+                digest: asset?.digest
             ))
         } catch is CancellationError {
             updateState = .idle
@@ -343,7 +352,7 @@ final class AppModel: ObservableObject {
     }
 
     func downloadUpdate(_ info: UpdateInfo) async {
-        guard let assetURL = info.assetURL, let assetName = info.assetName else {
+        guard let assetURL = info.assetURL, let assetName = info.assetName, let digest = info.digest else {
             NSWorkspace.shared.open(info.releaseURL)
             return
         }
@@ -353,11 +362,29 @@ final class AppModel: ObservableObject {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 throw URLError(.badServerResponse)
             }
-            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(assetName)
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent("CPAQuotaBar-\(assetName)")
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: temporaryURL, to: destination)
-            updateState = .downloaded(destination)
-            NSWorkspace.shared.open(destination)
+            let target = Bundle.main.bundleURL
+            let staged = try await Task.detached(priority: .userInitiated) {
+                try UpdateInstaller.prepare(archive: destination, digest: digest, version: info.version, target: target)
+            }.value
+            let backup = try await Task.detached(priority: .userInitiated) {
+                try UpdateInstaller.replace(staged: staged, target: target)
+            }.value
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.createsNewApplicationInstance = true
+            NSWorkspace.shared.openApplication(at: target, configuration: configuration) { [weak self] _, error in
+                Task { @MainActor in
+                    if let error {
+                        try? await Task.detached { try UpdateInstaller.restore(backup: backup, target: target) }.value
+                        self?.updateState = .failed("新版本启动失败：\(error.localizedDescription)")
+                    } else {
+                        self?.updateState = .downloaded(target)
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
         } catch is CancellationError {
             updateState = .available(info)
         } catch {
@@ -366,7 +393,9 @@ final class AppModel: ObservableObject {
     }
 
     private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Joenothing-lst/CPAQuotaBar/releases/latest")!
-    private static let currentVersion = "0.4.0"
+    private static var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0"
+    }
 
     private struct GitHubRelease: Decodable {
         let tagName: String
@@ -383,10 +412,12 @@ final class AppModel: ObservableObject {
     private struct GitHubAsset: Decodable {
         let name: String
         let browserDownloadURL: URL
+        let digest: String?
 
         enum CodingKeys: String, CodingKey {
             case name
             case browserDownloadURL = "browser_download_url"
+            case digest
         }
     }
 
