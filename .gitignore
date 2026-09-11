@@ -1,0 +1,26 @@
+# Swift / Xcode build output and per-user state
+.build/
+.swiftpm/
+DerivedData/
+build/
+dist/
+xcuserdata/
+*.xcuserstate
+
+# IDE and macOS local files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+._*
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.local
+*.log
+*.pem
+*.key
+*.p12
+*.mobileprovision
