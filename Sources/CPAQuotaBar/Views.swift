@@ -304,28 +304,6 @@ private struct DashboardView: View {
             .focusable(false)
             .help("退出 CPA Quota Bar")
 
-            switch model.updateState {
-            case .checking:
-                ProgressView().controlSize(.small).help("正在检查更新")
-            case let .available(info):
-                Button { Task { await model.downloadUpdate(info) } } label: {
-                    Image(systemName: "arrow.down.circle.fill")
-                }
-                .buttonStyle(GlassIconButtonStyle())
-                .focusable(false)
-                .help("发现新版本 \(info.version)，点击下载")
-            case let .downloading(info):
-                ProgressView().controlSize(.small).help("正在下载 \(info.version)")
-            case let .failed(message):
-                Button { Task { await model.checkForUpdates() } } label: {
-                    Image(systemName: "arrow.clockwise.circle")
-                }
-                .buttonStyle(GlassIconButtonStyle())
-                .focusable(false)
-                .help("更新检查失败：\(message)。点击重试")
-            default:
-                EmptyView()
-            }
         }
     }
 

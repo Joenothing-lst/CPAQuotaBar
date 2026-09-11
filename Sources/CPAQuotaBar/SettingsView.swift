@@ -15,6 +15,7 @@ struct SettingsView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     connectionCard
+                    updateCard
                     quotaPolicyCard
                     refreshCard
                     accountOverrideCard
@@ -59,23 +60,6 @@ struct SettingsView: View {
             .buttonStyle(GlassIconButtonStyle())
             .focusable(false)
             .help("退出 CPA Quota Bar")
-            if case let .available(info) = model.updateState {
-                Button { Task { await model.downloadUpdate(info) } } label: {
-                    Image(systemName: "arrow.down.circle.fill")
-                }
-                .buttonStyle(GlassIconButtonStyle())
-                .focusable(false)
-                .help("发现新版本 \(info.version)，点击下载")
-            } else if case .checking = model.updateState {
-                ProgressView().controlSize(.small)
-            } else if case let .failed(message) = model.updateState {
-                Button { Task { await model.checkForUpdates() } } label: {
-                    Image(systemName: "arrow.clockwise.circle")
-                }
-                .buttonStyle(GlassIconButtonStyle())
-                .focusable(false)
-                .help("更新检查失败：\(message)。点击重试")
-            }
         }
         .padding(.horizontal, 16)
         .frame(height: 58)
@@ -124,6 +108,68 @@ struct SettingsView: View {
                     .disabled(model.connectionTestState == .testing)
                 }
             }
+        }
+    }
+
+    private var updateCard: some View {
+        SettingsCard(title: "应用更新", icon: "arrow.triangle.2.circlepath") {
+            VStack(alignment: .leading, spacing: 9) {
+                Text(updateDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button(action: updateAction) {
+                    HStack(spacing: 7) {
+                        if case .checking = model.updateState {
+                            ProgressView().controlSize(.small)
+                        } else if case .downloading = model.updateState {
+                            ProgressView().controlSize(.small)
+                        }
+                        Text(updateButtonTitle)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.updateState == .checking || isDownloading)
+            }
+        }
+    }
+
+    private var isDownloading: Bool {
+        if case .downloading = model.updateState { return true }
+        return false
+    }
+
+    private var updateButtonTitle: String {
+        switch model.updateState {
+        case .available(let info): return "更新到 v\(info.version)"
+        case .checking: return "检查中…"
+        case .downloading: return "正在更新…"
+        case .upToDate: return "重新检查"
+        case .failed: return "重试检查"
+        case .downloaded: return "已完成更新"
+        case .idle: return "检查更新"
+        }
+    }
+
+    private var updateDescription: String {
+        switch model.updateState {
+        case .available(let info): return "发现新版本 v\(info.version)，点击更新后应用会自动重启。"
+        case .checking: return "正在检查 GitHub Releases…"
+        case .downloading: return "正在下载并校验新版本，完成后会自动重启。"
+        case .upToDate: return "当前已是最新版本。"
+        case .failed(let message): return "检查更新失败：\(message)"
+        case .downloaded: return "更新已完成。"
+        case .idle: return "启动时会自动检查，也可以手动检查。"
+        }
+    }
+
+    private func updateAction() {
+        switch model.updateState {
+        case let .available(info):
+            Task { await model.downloadUpdate(info) }
+        case .downloading, .checking, .downloaded:
+            break
+        default:
+            Task { await model.checkForUpdates() }
         }
     }
 
