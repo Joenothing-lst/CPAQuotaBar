@@ -1,154 +1,155 @@
 # CPAQuotaBar
 
-原生 macOS 菜单栏额度监控工具，通过 CLIProxyAPI（CPA）的管理接口查看 OpenAI / Codex、Gemini / Antigravity 和 Claude 账号的剩余额度。
+[English](README.md) | [简体中文](README_zh.md)
 
-采用原生 macOS 界面，支持账号池切换、双窗口额度圆环、请求统计和按阈值自动禁用账号。应用直接连接 CPA，无需安装额外的额度插件，也没有第三方 Swift 包依赖。
+A native macOS menu bar quota monitor designed to inspect remaining limits and reset windows for OpenAI / Codex, Gemini / Antigravity, and Claude accounts directly through the [CLIProxyAPI (CPA)](https://github.com/router-for/CLIProxyAPI) management interface.
 
-**当前版本：0.4.0 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
+Built with native macOS Liquid Glass aesthetics, CPAQuotaBar supports account pool switching, dual-ring quota dials, real-time request statistics, and threshold-based automatic account disabling. The app connects directly to CPA without requiring additional quota plugins or third-party Swift package dependencies.
 
-## 界面展示
+**Current Version: 0.4.0 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
+
+## Preview
 
 <p align="center">
-  <img src="Assets/README-demo-1.png" alt="CPAQuotaBar 界面展示 - OpenAI 账号池（演示数据，已脱敏）" width="48%" />
-  <img src="Assets/README-demo-2.png" alt="CPAQuotaBar 界面展示 - Gemini 账号池（演示数据，已脱敏）" width="48%" />
+  <img src="Assets/README-demo-1.png" alt="CPAQuotaBar Interface - OpenAI Pool (Demo data, masked)" width="48%" />
+  <img src="Assets/README-demo-2.png" alt="CPAQuotaBar Interface - Gemini Pool (Demo data, masked)" width="48%" />
 </p>
 
+## Table of Contents
 
-## 目录
+- [Features](#features)
+- [System Requirements](#system-requirements)
+- [Installation](#installation)
+- [Connecting to CPA](#connecting-to-cpa)
+- [Auto-Disable & Auto-Recovery](#auto-disable--auto-recovery)
+- [Refresh & Caching](#refresh--caching)
+- [Data & Security](#data--security)
+- [Troubleshooting](#troubleshooting)
+- [Updates & Uninstallation](#updates--uninstallation)
+- [Feedback & Contributing](#feedback--contributing)
+- [License](#license)
 
-- [功能](#功能)
-- [系统要求](#系统要求)
-- [安装](#安装)
-- [连接 CPA](#连接-cpa)
-- [自动禁用与恢复](#自动禁用与恢复)
-- [刷新与缓存](#刷新与缓存)
-- [数据与安全](#数据与安全)
-- [常见问题](#常见问题)
-- [更新与卸载](#更新与卸载)
-- [反馈与贡献](#反馈与贡献)
-- [许可证](#许可证)
+## Features
 
-## 功能
+- **Menu Bar Dual Rings**: Real-time status bar rings displaying the primary and secondary quota windows for the active pool.
+- **Account Pool Switching**: Switch seamlessly among OpenAI, Gemini, and Claude to view aggregated stats and detailed per-account lists.
+- **Privacy Masking**: One-click masking button beside the pool title to conceal sensitive account emails and identifiers for screenshots and demos.
+- **Quota & Request Statistics**: View remaining percentages, reset countdowns, account tiers, and recent request success rates.
+- **Tier-Weighted Quota Summary**: Pool summary percentage is weighted by actual plan capacity: Plus/Team counts as 1×, Pro 5× as 5×, Pro 20× as 20× (unrecognized tiers fallback to 1×). Account detail rows display their own individual quota percentages.
+- **Auto-Disable & Auto-Recovery**: Enforce global or per-account remaining quota thresholds to disable exhausted accounts and automatically restore them upon quota reset.
+- **Smart Activity-Based Refresh**: Automatically adjusts refresh intervals based on pool activity; supports instant manual refresh.
+- **Native macOS Design**: Crafted with macOS Liquid Glass, seamlessly adapting to both Light and Dark appearances.
 
-- **菜单栏双圆环**：展示当前账号池的两个额度窗口。
-- **账号池切换**：在 OpenAI、Gemini、Claude 之间切换，查看各池汇总与账号详情。
-- **账号隐私保护**：账号池标题旁提供脱敏按钮，可在查看账号时隐藏敏感标识。
-- **额度与请求统计**：查看剩余百分比、重置时间、账号套餐及近期请求成功率。
-- **套餐容量加权**：汇总剩余百分比会按账号套餐的实际容量加权计算：Plus/Team 为 1 倍、Pro 5x 为 5 倍、Pro 20x 为 20 倍；无法识别的套餐按 1 倍处理。账号详情中的百分比仍按该账号自身额度显示。
-- **自动禁用与恢复**：支持全局剩余额度阈值和单账号覆盖，并记录由应用管理的恢复时间。
-- **按活动刷新**：根据当前账号池的请求活动自动调整刷新频率，支持手动刷新。
-- **原生界面**：使用 macOS Liquid Glass，适配浅色和深色外观。
-
-| 视图 | 额度来源 |
+| View | Quota Source |
 | --- | --- |
-| OpenAI | CPA 中的 OpenAI / Codex 账号，使用 ChatGPT 额度接口 |
-| Gemini | Antigravity 账号的 Gemini 模型组 |
-| Claude | Claude OAuth 账号，以及 Antigravity 的 Claude / 第三方模型组 |
+| **OpenAI** | OpenAI / Codex accounts in CPA, queried via ChatGPT backend quota endpoints |
+| **Gemini** | Antigravity accounts under the Gemini model family |
+| **Claude** | Claude OAuth accounts, as well as Antigravity Claude / third-party model groups |
 
-同一个 Antigravity 账号可在 Gemini 和 Claude 两个视图中出现。额度取决于账号类型、套餐和上游返回的数据；并非每个账号都提供完整的 5 小时和周额度窗口。普通 Gemini API Key 账号不属于当前已适配的额度查询路径。
+*Note: The same Antigravity account can appear in both Gemini and Claude views. Quotas depend on account tier, subscription type, and upstream responses; not all accounts provide both 5-hour and weekly windows. Plain Gemini API Key accounts are currently not supported.*
 
-## 系统要求
+## System Requirements
 
-| 项目 | 要求 |
+| Item | Requirement |
 | --- | --- |
-| 运行平台 | Apple Silicon Mac（arm64），macOS 26.2 或更高版本 |
-| CPA 服务 | 已运行且可访问的 CLIProxyAPI，并准备好 Management Key |
+| **Platform** | Apple Silicon Mac (`arm64`), macOS 26.2 or higher |
+| **CPA Service** | A running and accessible CLIProxyAPI instance with a valid **Management Key** |
 
-CPAQuotaBar 通过 CPA 的管理接口读取账号和额度。请先确认 CPA 管理中心可以正常打开，并为需要监控的账号完成授权。当前版本不支持 Intel Mac。
+CPAQuotaBar queries accounts and quotas through CPA's management endpoints. Ensure your CPA management dashboard is accessible and authorized for your accounts. Intel Macs are not supported.
 
-## 安装
+## Installation
 
-请前往 [Releases](https://github.com/Joenothing-lst/CPAQuotaBar/releases) 下载最新的 `CPA-Quota-Bar-*-macos-arm64.zip`：
+Download the latest `CPA-Quota-Bar-*-macos-arm64.zip` from [Releases](https://github.com/Joenothing-lst/CPAQuotaBar/releases):
 
-1. 解压下载的 ZIP 文件。
-2. 将 `CPA Quota Bar.app` 拖入 macOS 的“应用程序”文件夹。
-3. 首次打开时，在 Finder 中右键应用并选择“打开”，然后确认运行。
-4. 应用启动后不会出现在 Dock 中，请在菜单栏查看额度圆环。
+1. Unzip the downloaded archive.
+2. Drag `CPA Quota Bar.app` into your macOS `/Applications` folder.
+3. On first launch, right-click the app in Finder, select **Open**, and confirm the prompt.
+4. The application runs strictly as an agent in the menu bar and does not appear in the Dock.
 
-当前发布包使用本地临时签名，尚未经过 Apple 公证。若 macOS 阻止打开，请在“系统设置 → 隐私与安全性”中允许本次打开。请只使用可信来源的发布包。
+*The release archive is signed with an ad-hoc local certificate and has not been notarized by Apple. If macOS prevents execution, navigate to **System Settings → Privacy & Security** to allow the application.*
 
-## 连接 CPA
+## Connecting to CPA
 
-1. 点击菜单栏额度圆环，打开设置。
-2. 填写 CPA 根地址，例如本机的 `http://127.0.0.1:8317` 或远程的 `https://cpa.example.com`。
-3. 填写 CPA **Management Key**，它不是用于模型请求的普通 API Key。
-4. 点击“测试连接”，确认账号列表可访问；此操作不会验证所有上游额度接口。
-5. 检查自动禁用选项、阈值及刷新频率，再点击“保存”。
+1. Click the menu bar quota rings and open **Settings**.
+2. Enter your CPA root address, e.g. `http://127.0.0.1:8317` (local) or `https://cpa.example.com` (remote).
+3. Provide your CPA **Management Key** (*not a standard model API key*).
+4. Click **Test Connection** to confirm connectivity to the account list.
+5. Review auto-disable preferences, quota thresholds, and refresh frequencies, then click **Save**.
 
-**当前默认开启自动禁用，剩余额度阈值为 10%。** 如果只希望观察额度，请在首次保存连接设置前关闭自动禁用。
+**Auto-disable is enabled by default with a 10% remaining quota threshold.** If you only wish to observe quotas without modifying account status, disable this option prior to saving.
 
-地址不要附带 `/management.html`、`/v0/management` 或页面路由片段。远程连接应使用 HTTPS，并在 CPA 中允许远程管理；反向代理需要完整转发 `/v0/management/`。
+Do not append `/management.html`, `/v0/management`, or URL fragments to the address. For remote connections, HTTPS is strongly recommended, and your reverse proxy must forward the entire `/v0/management/` path.
 
-## 自动禁用与恢复
+## Auto-Disable & Auto-Recovery
 
-自动禁用开启时，应用在刷新当前账号池时检查每个账号：只要某个已知额度窗口的剩余比例小于或等于阈值，且有未来的重置时间，就会通过 CPA 禁用该认证文件。
+When enabled, the app scans each account during pool refreshes: if any valid quota window drops to or below the configured threshold and has a future reset timestamp, the account credential is automatically disabled via CPA.
 
-- 多个窗口同时触发时，使用其中最晚的重置时间。
-- 只自动恢复由本应用记录为已禁用的账号；原本由用户手动禁用的账号不纳入恢复记录。
-- 无有效额度或未来重置时间的窗口不触发禁用。
-- 恢复需要应用运行、CPA 可访问，并刷新包含该账号的账号池；不是 CPA 服务端的定时任务。
-- 同一 Antigravity 认证文件的禁用状态会同时影响其 Gemini 与 Claude 模型组。
+- When multiple windows breach the threshold, the latest reset timestamp is selected.
+- The app only restores accounts that were automatically disabled by CPAQuotaBar itself; accounts manually disabled by the user are never modified.
+- Windows without valid quota figures or valid future reset dates will not trigger auto-disable.
+- Auto-recovery requires the app to remain running, CPA to be reachable, and the corresponding pool to be refreshed.
+- Disabling an Antigravity credential affects both its Gemini and Claude model bindings.
 
-### 单账号阈值
+### Per-Account Threshold Overrides
 
-在设置中的“账号覆盖”填写规则，每行一条，右侧范围为 `0` 至 `100`：
+In Settings under **Account Overrides**, specify individual thresholds (`0`–`100`), one rule per line:
 
 ```text
 account@example.com=5
-认证文件名.json=15
+auth-file.json=15
 auth-index=20
 ```
 
-没有覆盖规则的账号使用全局阈值。
+Accounts without custom rules inherit the global threshold.
 
-### 停止自动管理
+### Disabling Automatic Management
 
-关闭自动禁用并保存后，应用会尝试释放当前账号池中由它管理的禁用账号。如果曾管理多个账号池，还需逐一切换并刷新，确认账号已恢复后再退出、卸载或清除本地偏好。
+If you turn off auto-disable in Settings and save, the app will attempt to re-enable all managed accounts in the current pool. If multiple pools were monitored, switch to each pool and refresh once before quitting or clearing preferences.
 
-## 刷新与缓存
+## Refresh & Caching
 
-| 设置 | 默认值 | 行为 |
+| Setting | Default | Description |
 | --- | --- | --- |
-| 活跃刷新 | `1m` | 当前账号池有活动或面板打开时使用 |
-| 空闲刷新 | `1h` | 当前账号池持续无活动时使用 |
-| 进入空闲 | `5m` | 无新活动达到此时长后进入空闲状态 |
+| **Active Refresh** | `1m` | Used when the current pool has recent requests or the popup panel is open |
+| **Idle Refresh** | `1h` | Used when the current pool has had no activity for an extended duration |
+| **Idle Timeout** | `5m` | Time of inactivity required before transitioning from active to idle |
 
-面板关闭时，后台约每分钟检查当前账号池的轻量活动摘要；检测到变化时刷新额度。切换账号池会先展示本地缓存，并在短暂防抖后按需查询新数据。主面板的刷新按钮可立即查询。
+When the popup panel is closed, a lightweight background tick checks pool activity roughly once per minute. Switching pools displays local cache immediately, followed by a debounced query. The manual refresh icon triggers an immediate upstream fetch.
 
-一次完整刷新会并发查询当前账号池中的账号。网络较慢或账号较多时可能需要数秒；缓存与过期状态不代表新的上游额度结果。401 / 403 鉴权失败会暂停自动轮询，修正连接设置并保存后恢复。
+*Note: Complete refreshes query accounts in parallel. Slow networks or large account pools may take several seconds. A 401/403 authentication error automatically halts background polling until settings are updated.*
 
-## 数据与安全
+## Data & Security
 
-- 应用仅直接连接配置的 CPA；CPA 负责向相应服务商转发额度查询。
-- Management Key 存储在 macOS `UserDefaults` 中，**未使用钥匙串或加密存储**。
-- 应用以认证文件的 `authIndex` 和 `$TOKEN$` 占位符请求 CPA 转发，不下载或保存 OAuth 访问令牌。
-- 本地偏好还保存连接地址、监控策略、账号覆盖、恢复记录以及含账号信息的额度缓存。
-- 请勿在 Issue、截图、日志或提交中公开 Management Key、OAuth Token、认证文件或未脱敏的账号信息。
+- CPAQuotaBar communicates exclusively with your configured CPA instance; CPA handles upstream provider queries.
+- The Management Key is stored in macOS `UserDefaults` (**unencrypted, not stored in Keychain**).
+- The app queries CPA using `authIndex` references and `$TOKEN$` placeholders; OAuth access tokens are neither downloaded nor stored locally.
+- Local preferences retain server addresses, monitor settings, account overrides, recovery holds, and cached quota responses.
+- Never share your Management Key, OAuth tokens, credentials, or unmasked account logs in issues, screenshots, or PRs.
 
-用户偏好的 bundle ID 为 `me.router-for.cpa-quota-bar`。正常覆盖应用不会清除这些设置。
+The application preferences domain is `me.router-for.cpa-quota-bar`.
 
-## 常见问题
+## Troubleshooting
 
-| 现象 | 排查方法 |
+| Symptom | Resolution |
 | --- | --- |
-| `401` | 确认填写的是有效的 Management Key，然后重新测试连接 |
-| `403` / `IP banned` | 检查远程管理权限；连续鉴权失败导致封禁时，停止重复尝试并等待解封 |
-| `404` | 检查 CPA 是否支持上述管理接口，以及代理是否转发整个 `/v0/management/` 路径 |
-| 某个账号为红色或无额度 | 检查认证是否过期、账号类型、上游可达性及 CPA 返回的错误信息 |
-| 找不到应用窗口 | 应用没有 Dock 图标，查看菜单栏圆环；菜单栏空间不足时收起其他项目 |
+| `401 Unauthorized` | Verify that the CPA Management Key is correct and test the connection again. |
+| `403` / `IP banned` | Ensure remote management is allowed in CPA; if banned due to consecutive failures, pause requests and wait for unban. |
+| `404 Not Found` | Ensure CPA supports management APIs and reverse proxies forward the entire `/v0/management/` path. |
+| Red Account / Missing Quota | Check if token authorization expired, account type compatibility, or upstream CPA response errors. |
+| Window Not Visible | The application lives strictly in the menu bar without a Dock icon; verify space in your menu bar. |
 
-## 更新与卸载
+## Updates & Uninstallation
 
-应用启动后会自动检查 GitHub Releases，并每天检查一次。打开设置页的“应用更新”卡片即可手动检查；发现新版本时，按钮会变为“更新到 vX”，点击后应用会下载、校验并安装对应的 macOS 应用，然后自动重启到新版本。检查失败不会影响当前版本运行。
+The app automatically checks GitHub Releases upon launch and once daily. Open the **App Update** section in Settings to check manually. When a new version is available, click **Update to vX** to automatically download, verify (SHA-256), install, and restart the app.
 
-如果应用长期离线，也可以从 [Releases](https://github.com/Joenothing-lst/CPAQuotaBar/releases) 手动下载更新。更新时退出正在运行的 CPAQuotaBar，用新版 `.app` 覆盖旧应用，再重新打开。连接信息和本地策略会保留。
+For offline environments, manual updates can be downloaded from [Releases](https://github.com/Joenothing-lst/CPAQuotaBar/releases). Overwrite the `.app` bundle in `/Applications`; local preferences will be preserved.
 
-卸载前先按[停止自动管理](#停止自动管理)释放相关账号，然后退出应用并将其移入废纸篓。若还要清除用户偏好，必须先确认不再需要本地恢复记录；删除记录后应用将无法识别并恢复此前由它禁用的账号。
+Before uninstalling, make sure to re-enable any managed disabled accounts (see [Disabling Automatic Management](#disabling-automatic-management)), then drag the app to Trash.
 
-## 反馈与贡献
+## Feedback & Contributing
 
-欢迎通过 GitHub [Issue](https://github.com/Joenothing-lst/CPAQuotaBar/issues) 提交可复现的问题，或通过 Pull Request 贡献修改。请说明 macOS、CPA 版本和现象，附上脱敏后的步骤、截图或日志。请勿提交 Management Key、OAuth Token、认证文件或未脱敏的账号信息。
+Issues and pull requests are warmly welcomed via [GitHub Issues](https://github.com/Joenothing-lst/CPAQuotaBar/issues). Please include your macOS version, CPA version, and masked reproduction steps.
 
-## 许可证
+## License
 
-本项目代码采用 [MIT License](LICENSE)。服务商名称与品牌标识用于识别所连接的服务，相关商标权归各自权利人所有。
+This project is licensed under the [MIT License](LICENSE). Third-party service names, icons, and trademarks belong to their respective owners.
