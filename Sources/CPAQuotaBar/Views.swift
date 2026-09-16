@@ -71,6 +71,24 @@ private struct MenuMiniRing: View {
     }
 }
 
+@propertyWrapper
+private struct UIState<Value>: DynamicProperty {
+    private var storage: SwiftUI.State<Value>
+
+    init(wrappedValue: Value) {
+        self.storage = SwiftUI.State(wrappedValue: wrappedValue)
+    }
+
+    var wrappedValue: Value {
+        get { storage.wrappedValue }
+        nonmutating set { storage.wrappedValue = newValue }
+    }
+
+    var projectedValue: Binding<Value> {
+        storage.projectedValue
+    }
+}
+
 private let accountRowHeight: CGFloat = 78
 
 private func accountViewportHeight(count: Int) -> CGFloat {
@@ -82,9 +100,9 @@ private func accountViewportHeight(count: Int) -> CGFloat {
 
 struct RootView: View {
     @ObservedObject var model: AppModel
-    @State private var showingSettings = false
-    @State private var accountsExpanded = false
-    @State private var accountsMasked = false
+    @UIState private var showingSettings = false
+    @UIState private var accountsExpanded = false
+    @UIState private var accountsMasked = false
     let preferredHeight: (CGFloat) -> Void
 
     private var panelHeight: CGFloat {
@@ -684,7 +702,7 @@ private struct RequestStatusBlock: View {
     let index: Int
     let total: Int
 
-    @State private var isHovering = false
+    @UIState private var isHovering = false
 
     private var tooltipXOffset: CGFloat {
         guard total > 1 else { return 0 }
@@ -906,7 +924,7 @@ private struct ConcentricRefreshIcon: View {
 }
 
 private struct ConcentricSpinner: View {
-    @State private var isSpinning = false
+    @UIState private var isSpinning = false
 
     var body: some View {
         Circle()

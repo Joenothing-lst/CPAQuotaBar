@@ -8,7 +8,10 @@
 
 ## 界面展示
 
-![CPAQuotaBar 界面展示（演示数据，已脱敏）](Assets/README-demo.png)
+<p align="center">
+  <img src="Assets/README-demo-1.png" alt="CPAQuotaBar 界面展示 - OpenAI 账号池（演示数据，已脱敏）" width="48%" />
+  <img src="Assets/README-demo-2.png" alt="CPAQuotaBar 界面展示 - Gemini 账号池（演示数据，已脱敏）" width="48%" />
+</p>
 
 
 ## 目录
