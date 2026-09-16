@@ -13,6 +13,12 @@ struct CoreSmokeTests {
         guard QuotaMath.totalSuccessRate([RequestBucket(time: "idle", success: 0, failed: 0)]) == nil else {
             fatalError("idle success rate failed")
         }
+        guard abs(QuotaMath.weightedAverageRemaining([
+            (remaining: 100, plan: "Plus"),
+            (remaining: 0, plan: "Pro 20x"),
+        ])! - (100.0 / 21.0)) < 0.0001 else {
+            fatalError("weighted quota average failed")
+        }
         let now = Date(timeIntervalSince1970: 1_000)
         guard QuotaMath.countdown(to: now.addingTimeInterval(125 * 60), now: now) == "2h 5m" else {
             fatalError("countdown failed")

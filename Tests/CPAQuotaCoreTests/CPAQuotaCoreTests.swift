@@ -18,6 +18,31 @@ final class CPAQuotaCoreTests: XCTestCase {
         XCTAssertEqual(QuotaMath.countdown(to: now.addingTimeInterval(51 * 60 * 60), now: now), "2d 3h")
     }
 
+    func testPlanWeightsAndWeightedRemaining() {
+        XCTAssertEqual(QuotaMath.planWeight("Plus"), 1)
+        XCTAssertEqual(QuotaMath.planWeight("Pro 5x"), 5)
+        XCTAssertEqual(QuotaMath.planWeight("pro5x"), 5)
+        XCTAssertEqual(QuotaMath.planWeight("pro_20x"), 20)
+        XCTAssertEqual(QuotaMath.planWeight("Pro 20X"), 20)
+        XCTAssertEqual(QuotaMath.planWeight("unknown"), 1)
+        XCTAssertEqual(
+            QuotaMath.weightedAverageRemaining([
+                (remaining: 100, plan: "Plus"),
+                (remaining: 0, plan: "Pro 20x"),
+            ])!,
+            100.0 / 21.0,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            QuotaMath.weightedAverageRemaining([
+                (remaining: 100, plan: "Plus"),
+                (remaining: 0, plan: "Pro 5x"),
+            ])!,
+            100.0 / 6.0,
+            accuracy: 0.0001
+        )
+    }
+
     func testPluginSettingsUsesCPAKeys() throws {
         let data = try JSONEncoder().encode(PluginSettings())
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

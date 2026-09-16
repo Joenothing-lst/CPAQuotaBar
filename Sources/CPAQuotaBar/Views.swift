@@ -84,6 +84,7 @@ struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var showingSettings = false
     @State private var accountsExpanded = false
+    @State private var accountsMasked = false
     let preferredHeight: (CGFloat) -> Void
 
     private var panelHeight: CGFloat {
@@ -136,7 +137,9 @@ struct RootView: View {
                         DashboardView(
                             model: model,
                             accountsExpanded: accountsExpanded,
-                            toggleAccounts: toggleAccounts
+                            accountsMasked: accountsMasked,
+                            toggleAccounts: toggleAccounts,
+                            toggleAccountsMask: { accountsMasked.toggle() }
                         ) {
                             showingSettings = true
                         }
@@ -169,7 +172,9 @@ struct RootView: View {
 private struct DashboardView: View {
     @ObservedObject var model: AppModel
     let accountsExpanded: Bool
+    let accountsMasked: Bool
     let toggleAccounts: () -> Void
+    let toggleAccountsMask: () -> Void
     let openSettings: () -> Void
 
     var body: some View {
@@ -392,22 +397,36 @@ private struct DashboardView: View {
         let viewportHeight = accountViewportHeight(count: accounts.count)
 
         return VStack(spacing: 0) {
-            Button(action: toggleAccounts) {
-                HStack {
-                    Label("\(model.selectedPool.displayName) 账号池", systemImage: "person.2.fill")
-                        .font(.subheadline.weight(.semibold))
-                    Text("\(summary.totalAccounts)")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold))
-                        .rotationEffect(.degrees(accountsExpanded ? 180 : 0))
+            HStack(spacing: 8) {
+                Button(action: toggleAccounts) {
+                    HStack {
+                        Label("\(model.selectedPool.displayName) 账号池", systemImage: "person.2.fill")
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(summary.totalAccounts)")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .rotationEffect(.degrees(accountsExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .focusable(false)
+
+                Button(action: toggleAccountsMask) {
+                    Image(systemName: accountsMasked ? "eye.slash" : "eye")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help(accountsMasked ? "显示账号" : "脱敏账号")
+                .accessibilityLabel(accountsMasked ? "显示账号" : "脱敏账号")
             }
-            .buttonStyle(.plain)
-            .focusable(false)
             .padding(13)
 
             VStack(spacing: 0) {
@@ -422,7 +441,7 @@ private struct DashboardView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(accounts) { account in
-                                AccountRow(account: account)
+                                AccountRow(account: account, isMasked: accountsMasked)
                                 if account.id != accounts.last?.id {
                                     Divider().opacity(0.30)
                                 }
@@ -478,9 +497,9 @@ private struct DashboardView: View {
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                     ProgressView().controlSize(.small)
-                    Image(systemName: "chevron.down")
+                    Image(systemName: "chevron.right")
                         .font(.caption.weight(.bold))
-                        .rotationEffect(.degrees(accountsExpanded ? 180 : 0))
+                        .rotationEffect(.degrees(accountsExpanded ? 90 : 0))
                 }
                 .contentShape(Rectangle())
             }
@@ -732,6 +751,7 @@ private struct RequestStatusBlock: View {
 
 private struct AccountRow: View {
     let account: Account
+    let isMasked: Bool
 
     var body: some View {
         HStack(spacing: 11) {
@@ -741,7 +761,7 @@ private struct AccountRow: View {
                 .shadow(color: statusColor.opacity(0.40), radius: 3)
 
             VStack(alignment: .leading, spacing: 7) {
-                Text(account.displayName)
+                Text(displayName)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -780,6 +800,18 @@ private struct AccountRow: View {
         }
         .padding(.horizontal, 12)
         .frame(height: accountRowHeight)
+    }
+
+    private var displayName: String {
+        guard isMasked else { return account.displayName }
+        let value = account.displayName
+        if let at = value.firstIndex(of: "@"), at != value.startIndex {
+            let local = value[..<at]
+            let visible = local.prefix(1)
+            return "\(visible)***\(value[at...])"
+        }
+        if value.count <= 2 { return value.prefix(1) + "***" }
+        return "\(value.prefix(1))***\(value.suffix(1))"
     }
 
     private var statusColor: Color {

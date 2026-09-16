@@ -158,11 +158,11 @@ public struct CPAClient: Sendable {
             } else if rawType == "claude" {
                 let data = try await fetchClaudeQuota(for: file)
                 parsed = try parseClaudeUsage(data, now: now)
-                resolvedPlan = parsed.planType ?? file.idToken?.planType
+                resolvedPlan = parsed.planType ?? file.planType ?? file.idToken?.planType
             } else {
                 let data = try await fetchCodexQuota(for: file)
                 parsed = try parseOpenAIUsage(data, now: now)
-                resolvedPlan = parsed.planType ?? file.idToken?.planType
+                resolvedPlan = parsed.planType ?? file.planType ?? file.idToken?.planType
             }
 
             return Account(
@@ -192,7 +192,7 @@ public struct CPAClient: Sendable {
                 email: file.email ?? file.account,
                 authType: file.accountType,
                 channel: channelTag,
-                planType: isAntigravity ? "Pro" : file.idToken?.planType,
+                planType: isAntigravity ? "Pro" : (file.planType ?? file.idToken?.planType),
                 subscriptionUntil: file.idToken?.subscriptionUntil,
                 credentialExpires: nil,
                 hostDisabled: file.disabled,
@@ -394,6 +394,7 @@ private struct NativeAuthFile: Decodable, Sendable {
     let type: String?
     let projectID: String?
     let accountType: String?
+    let planType: String?
     let authIndex: String
     var disabled: Bool
     let recentRequests: [RequestBucket]
@@ -405,6 +406,7 @@ private struct NativeAuthFile: Decodable, Sendable {
         case id, name, label, account, email, provider, type, disabled, success, failed
         case projectID = "project_id"
         case accountType = "account_type"
+        case planType = "plan_type"
         case authIndex = "auth_index"
         case recentRequests = "recent_requests"
         case idToken = "id_token"
@@ -421,6 +423,7 @@ private struct NativeAuthFile: Decodable, Sendable {
         type = try box.decodeIfPresent(String.self, forKey: .type)
         projectID = try box.decodeIfPresent(String.self, forKey: .projectID)
         accountType = try box.decodeIfPresent(String.self, forKey: .accountType)
+        planType = try box.decodeIfPresent(String.self, forKey: .planType)
         authIndex = try box.decodeIfPresent(String.self, forKey: .authIndex) ?? ""
         disabled = try box.decodeIfPresent(Bool.self, forKey: .disabled) ?? false
         recentRequests = try box.decodeIfPresent([RequestBucket].self, forKey: .recentRequests) ?? []
@@ -726,11 +729,17 @@ private func makeSummary(accounts: [Account], settings: PluginSettings, now: Dat
 }
 
 private func summarizeWindow(accounts: [Account], key: String, now: Date) -> WindowSummary {
-    let windows = accounts.compactMap { $0.windows[key] }
+    let entries = accounts.compactMap { account -> (window: QuotaWindow, plan: String?)? in
+        guard let window = account.windows[key] else { return nil }
+        return (window, account.planType)
+    }
+    let windows = entries.map(\.window)
     guard !windows.isEmpty else {
         return WindowSummary(knownAccounts: 0, averageRemainingPercent: 0, effectiveResetAt: nil, resetProgressPercent: nil)
     }
-    let average = windows.reduce(0) { $0 + $1.remaining } / Double(windows.count)
+    let average = QuotaMath.weightedAverageRemaining(
+        entries.map { (remaining: $0.window.remaining, plan: $0.plan) }
+    ) ?? 0
     let samples = windows.compactMap { window -> (seconds: Double, progress: Double, weight: Double)? in
         guard let reset = window.resetDate,
               let duration = window.windowSeconds,

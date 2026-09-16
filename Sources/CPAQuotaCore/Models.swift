@@ -426,6 +426,30 @@ public struct PluginSettings: Codable, Sendable, Equatable {
 }
 
 public enum QuotaMath {
+    /// Returns the relative quota capacity for a Codex plan.
+    /// Unknown or missing plans use the Plus capacity as a safe default.
+    public static func planWeight(_ plan: String?) -> Double {
+        let normalized = (plan ?? "")
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+        if normalized.contains("20x") || normalized.contains("pro20") { return 20 }
+        if normalized.contains("5x") || normalized.contains("pro5") { return 5 }
+        return 1
+    }
+
+    /// Computes a remaining-quota average weighted by each account's plan capacity.
+    public static func weightedAverageRemaining(_ samples: [(remaining: Double, plan: String?)]) -> Double? {
+        guard !samples.isEmpty else { return nil }
+        let weightedTotal = samples.reduce(0.0) { total, sample in
+            total + sample.remaining * planWeight(sample.plan)
+        }
+        let totalWeight = samples.reduce(0.0) { total, sample in
+            total + planWeight(sample.plan)
+        }
+        guard totalWeight > 0 else { return nil }
+        return weightedTotal / totalWeight
+    }
+
     public static func totalSuccessRate(_ buckets: [RequestBucket]) -> Double? {
         let success = buckets.reduce(Int64(0)) { $0 + $1.success }
         let total = buckets.reduce(Int64(0)) { $0 + $1.total }
