@@ -19,6 +19,12 @@ final class CPAQuotaCoreTests: XCTestCase {
     }
 
     func testPlanWeightsAndWeightedRemaining() {
+        XCTAssertEqual(QuotaMath.planDisplayName("self_serve_business_prolite"), "Premium")
+        XCTAssertEqual(QuotaMath.planDisplayName("pro_lite"), "ProLite")
+        for plan in ["self_serve_business_prolite", "Premium", "ProLite", "pro_lite", "pro-lite"] {
+            XCTAssertTrue(QuotaMath.isProLitePlan(plan))
+            XCTAssertEqual(QuotaMath.planWeight(plan), 5)
+        }
         XCTAssertEqual(QuotaMath.planWeight("Plus"), 1)
         XCTAssertEqual(QuotaMath.planWeight("Pro 5x"), 5)
         XCTAssertEqual(QuotaMath.planWeight("pro5x"), 5)

@@ -323,7 +323,7 @@ final class AppModel: ObservableObject {
         updateState = .checking
         do {
             var request = URLRequest(url: Self.latestReleaseURL)
-            request.setValue("CPAQuotaBar/0.4.0", forHTTPHeaderField: "User-Agent")
+            request.setValue("CPAQuotaBar/0.4.1", forHTTPHeaderField: "User-Agent")
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -394,7 +394,7 @@ final class AppModel: ObservableObject {
 
     private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Joenothing-lst/CPAQuotaBar/releases/latest")!
     private static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.0"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.1"
     }
 
     private struct GitHubRelease: Decodable {
@@ -487,38 +487,8 @@ final class AppModel: ObservableObject {
         let incoming = result.summary
         let allFailed = incoming.totalAccounts > 0 && incoming.knownAccounts == 0
 
-        if allFailed {
-            // 当所有账号的额度请求同时短暂失败（上游 OpenAI 抖动或网络波动）：
-            // 绝不将这次“账号存在但额度全未知”的结果覆盖旧数据！
-            // 继续保留上一次的有效缓存结果，并在界面上亮起黄灯！
-            let existing = (pool == selectedPool ? self.summary : nil) ?? Self.loadCachedSummary(from: defaults, address: normalizedAddress, pool: pool)
-            if let existing {
-                let fallbackSummary = CPASummary(
-                    generatedAt: existing.generatedAt,
-                    config: incoming.config,
-                    totalAccounts: incoming.totalAccounts,
-                    knownAccounts: existing.knownAccounts,
-                    unknownAccounts: existing.unknownAccounts,
-                    heldAccounts: incoming.heldAccounts,
-                    primary: existing.primary,
-                    secondary: existing.secondary,
-                    recentRequests: incoming.recentRequests.isEmpty ? existing.recentRequests : incoming.recentRequests,
-                    accounts: existing.accounts,
-                    refreshing: false,
-                    lastScanAt: existing.lastScanAt,
-                    lastScanError: incoming.lastScanError ?? quotaFallbackMessage
-                )
-                if pool == selectedPool {
-                    self.summary = fallbackSummary
-                    self.isShowingCachedFallback = true
-                    self.errorMessage = quotaFallbackMessage
-                    self.authenticationPaused = false
-                }
-                return
-            }
-        }
-
-        // 刷新成功（至少有账号拿到额度），或账号池本来为空
+        // Reuse quota only for matching accounts; the latest roster and disabled
+        // state remain authoritative even when every quota request fails.
         var finalAccounts = incoming.accounts
         // 如果有少量账号偶发超时，继承上一轮有效 windows 并标记 stale，防止单账号跳变
         let prevSource = (pool == selectedPool ? self.summary : nil) ?? Self.loadCachedSummary(from: defaults, address: normalizedAddress, pool: pool)
@@ -549,21 +519,22 @@ final class AppModel: ObservableObject {
             }
         }
 
+        let usingFallback = allFailed && finalAccounts.contains { !$0.windows.isEmpty }
         let finalSummary = CPASummary(
-            generatedAt: incoming.generatedAt,
+            generatedAt: usingFallback ? (prevSource?.generatedAt ?? incoming.generatedAt) : incoming.generatedAt,
             config: incoming.config,
             totalAccounts: incoming.totalAccounts,
             knownAccounts: finalAccounts.filter { !$0.unknown }.count,
             unknownAccounts: finalAccounts.filter { $0.unknown }.count,
             heldAccounts: incoming.heldAccounts,
-            primary: incoming.primary.remaining != nil ? incoming.primary : (prevSource?.primary ?? incoming.primary),
-            secondary: incoming.secondary.remaining != nil ? incoming.secondary : (prevSource?.secondary ?? incoming.secondary),
+            primary: incoming.primary,
+            secondary: incoming.secondary,
             recentRequests: incoming.recentRequests,
             accounts: finalAccounts,
             refreshing: incoming.refreshing,
-            lastScanAt: incoming.lastScanAt,
-            lastScanError: incoming.lastScanError
-        )
+            lastScanAt: usingFallback ? prevSource?.lastScanAt : incoming.lastScanAt,
+            lastScanError: incoming.lastScanError ?? (usingFallback ? quotaFallbackMessage : nil)
+        ).recalculatingQuota()
 
         // 关键防护 1：永远将数据保存到其真实所属的 pool 缓存中，绝不借用当前动态的 selectedPool
         Self.saveCachedSummary(finalSummary, for: normalizedAddress, pool: pool, to: defaults)
@@ -574,7 +545,7 @@ final class AppModel: ObservableObject {
         }
 
         self.summary = finalSummary
-        self.isShowingCachedFallback = false
+        self.isShowingCachedFallback = usingFallback
 
         let errors = [finalSummary.lastScanError].compactMap { $0 }
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "；")
@@ -626,7 +597,7 @@ final class AppModel: ObservableObject {
         guard let data = defaults.data(forKey: key),
               let envelope = try? JSONDecoder().decode(CachedSummaryEnvelope.self, from: data),
               envelope.address == address else { return nil }
-        return envelope.summary
+        return envelope.summary.recalculatingQuota()
     }
 
     private static func saveCachedSummary(_ summary: CPASummary, for address: String, pool: AccountPoolType, to defaults: UserDefaults) {

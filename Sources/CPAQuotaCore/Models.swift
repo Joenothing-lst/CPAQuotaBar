@@ -144,6 +144,26 @@ public struct CPASummary: Codable, Sendable {
     }
 }
 
+extension CPASummary {
+    public func recalculatingQuota(now: Date = Date()) -> CPASummary {
+        CPASummary(
+            generatedAt: generatedAt,
+            config: config,
+            totalAccounts: totalAccounts,
+            knownAccounts: knownAccounts,
+            unknownAccounts: unknownAccounts,
+            heldAccounts: heldAccounts,
+            primary: QuotaMath.summarizeWindow(accounts: accounts, key: "primary", now: now),
+            secondary: QuotaMath.summarizeWindow(accounts: accounts, key: "secondary", now: now),
+            recentRequests: recentRequests,
+            accounts: accounts,
+            refreshing: refreshing,
+            lastScanAt: lastScanAt,
+            lastScanError: lastScanError
+        )
+    }
+}
+
 public struct RuntimeConfig: Codable, Sendable {
     public let remainingThresholdPercent: Double
     public let accountOverrides: [String: Double]
@@ -252,7 +272,7 @@ public struct Account: Codable, Identifiable, Sendable {
         self.subscriptionUntil = subscriptionUntil
         self.credentialExpires = credentialExpires
         self.hostDisabled = hostDisabled
-        self.windows = windows
+        self.windows = QuotaWindow.normalized(windows)
         self.recentRequests = recentRequests
         self.thresholdPercent = thresholdPercent
         self.held = held
@@ -273,7 +293,7 @@ public struct Account: Codable, Identifiable, Sendable {
         subscriptionUntil = try container.decodeIfPresent(String.self, forKey: .subscriptionUntil)
         credentialExpires = try container.decodeIfPresent(String.self, forKey: .credentialExpires)
         hostDisabled = try container.decodeIfPresent(Bool.self, forKey: .hostDisabled) ?? false
-        windows = try container.decodeIfPresent([String: QuotaWindow].self, forKey: .windows) ?? [:]
+        windows = QuotaWindow.normalized(try container.decodeIfPresent([String: QuotaWindow].self, forKey: .windows) ?? [:])
         recentRequests = try container.decodeIfPresent([RequestBucket].self, forKey: .recentRequests) ?? []
         thresholdPercent = try container.decodeIfPresent(Double.self, forKey: .thresholdPercent) ?? 0
         held = try container.decodeIfPresent(Bool.self, forKey: .held) ?? false
@@ -337,6 +357,31 @@ public struct QuotaWindow: Codable, Sendable {
         try container.encode(usedPercent, forKey: .usedPercent)
         try container.encodeIfPresent(resetAt, forKey: .resetAt)
         try container.encodeIfPresent(windowSeconds, forKey: .windowSeconds)
+    }
+
+    /// API primary/secondary positions do not identify the quota period.
+    /// Normalize both live responses and older cached accounts by duration.
+    static func normalized(_ windows: [String: QuotaWindow]) -> [String: QuotaWindow] {
+        var result: [String: QuotaWindow] = [:]
+        for key in windows.keys.sorted() {
+            guard let window = windows[key] else { continue }
+            let destination: String
+            switch window.windowSeconds {
+            case 5 * 3600: destination = "primary"
+            case 7 * 24 * 3600: destination = "secondary"
+            default: destination = key
+            }
+            // Prefer the native slot if an upstream response duplicates a period.
+            if result[destination] == nil || key == destination {
+                result[destination] = QuotaWindow(
+                    name: destination,
+                    usedPercent: window.usedPercent,
+                    resetAt: window.resetAt,
+                    windowSeconds: window.windowSeconds
+                )
+            }
+        }
+        return result
     }
 
     public var remaining: Double { (100 - usedPercent).clampedPercent }
@@ -426,12 +471,28 @@ public struct PluginSettings: Codable, Sendable, Equatable {
 }
 
 public enum QuotaMath {
+    public static func planDisplayName(_ plan: String) -> String {
+        switch normalizedPlan(plan) {
+        case "selfservebusinessprolite", "premium": return "Premium"
+        case "prolite": return "ProLite"
+        default: return plan.prefix(1).uppercased() + String(plan.dropFirst()).lowercased()
+        }
+    }
+
+    /// Premium business seats share the ProLite capacity and badge style.
+    public static func isProLitePlan(_ plan: String?) -> Bool {
+        ["prolite", "selfservebusinessprolite", "premium"].contains(normalizedPlan(plan))
+    }
+
+    private static func normalizedPlan(_ plan: String?) -> String {
+        (plan ?? "").lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
     /// Returns the relative quota capacity for a Codex plan.
     /// Unknown or missing plans use the Plus capacity as a safe default.
     public static func planWeight(_ plan: String?) -> Double {
-        let normalized = (plan ?? "")
-            .lowercased()
-            .filter { $0.isLetter || $0.isNumber }
+        let normalized = normalizedPlan(plan)
+        if isProLitePlan(plan) { return 5 }
         if normalized.contains("20x") || normalized.contains("pro20") { return 20 }
         if normalized.contains("5x") || normalized.contains("pro5") { return 5 }
         return 1

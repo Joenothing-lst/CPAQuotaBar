@@ -23,18 +23,22 @@ struct StatusBarLabel: View {
         HStack(spacing: 6) {
             ProviderBrandIcon(pool: model.selectedPool, isSelected: true)
                 .frame(width: 15.5, height: 15.5)
-            MenuMiniRing(
-                value: primary?.remaining,
-                threshold: threshold,
-                resetProgress: primary?.resetProgressPercent
-            )
+            if primary?.remaining != nil || secondary?.remaining == nil {
+                MenuMiniRing(
+                    value: primary?.remaining,
+                    threshold: threshold,
+                    resetProgress: primary?.resetProgressPercent
+                )
+            }
             MenuMiniRing(
                 value: secondary?.remaining,
                 threshold: threshold,
                 resetProgress: secondary?.resetProgressPercent
             )
         }
-        .accessibilityLabel("\(model.selectedPool.displayName) 额度，5小时 \(formatted(primary?.remaining))，1周 \(formatted(secondary?.remaining))")
+        .accessibilityLabel(primary?.remaining == nil && secondary?.remaining != nil
+            ? "\(model.selectedPool.displayName) 额度，1周 \(formatted(secondary?.remaining))"
+            : "\(model.selectedPool.displayName) 额度，5小时 \(formatted(primary?.remaining))，1周 \(formatted(secondary?.remaining))")
     }
 
     private func formatted(_ value: Double?) -> String { value.map { String(Int($0.rounded())) } ?? "未知" }
@@ -376,14 +380,16 @@ private struct DashboardView: View {
     private func summaryCard(_ summary: CPASummary) -> some View {
         VStack(spacing: 13) {
             HStack(spacing: 28) {
-                QuotaRingView(
-                    label: "5h",
-                    value: summary.primary.remaining,
-                    threshold: summary.config.remainingThresholdPercent,
-                    resetProgress: summary.primary.resetProgressPercent,
-                    resetDate: summary.primary.resetDate,
-                    diameter: 126
-                )
+                if summary.primary.remaining != nil || summary.secondary.remaining == nil {
+                    QuotaRingView(
+                        label: "5h",
+                        value: summary.primary.remaining,
+                        threshold: summary.config.remainingThresholdPercent,
+                        resetProgress: summary.primary.resetProgressPercent,
+                        resetDate: summary.primary.resetDate,
+                        diameter: 126
+                    )
+                }
                 QuotaRingView(
                     label: "1w",
                     value: summary.secondary.remaining,
@@ -799,14 +805,16 @@ private struct AccountRow: View {
             // appear to bleed through the tooltip.
             .zIndex(1)
 
-            QuotaRingView(
-                label: "5h",
-                value: account.primary?.remaining,
-                threshold: account.thresholdPercent,
-                resetProgress: account.primary?.resetProgress(),
-                resetDate: account.primary?.resetDate,
-                diameter: 58
-            )
+            if account.primary != nil || account.secondary == nil {
+                QuotaRingView(
+                    label: "5h",
+                    value: account.primary?.remaining,
+                    threshold: account.thresholdPercent,
+                    resetProgress: account.primary?.resetProgress(),
+                    resetDate: account.primary?.resetDate,
+                    diameter: 58
+                )
+            }
             QuotaRingView(
                 label: "1w",
                 value: account.secondary?.remaining,
@@ -857,7 +865,7 @@ private struct ChannelTag: View {
 private struct PlanTag: View {
     let plan: String
     var body: some View {
-        Text(plan.prefix(1).uppercased() + String(plan.dropFirst()).lowercased())
+        Text(QuotaMath.planDisplayName(plan))
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(color)
             .padding(.horizontal, 5)
@@ -866,6 +874,7 @@ private struct PlanTag: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(color.opacity(0.30), lineWidth: 0.7))
     }
     private var color: Color {
+        if QuotaMath.isProLitePlan(plan) { return .orange }
         switch plan.lowercased() {
         case "plus": return .purple
         case "team": return AppPalette.blue

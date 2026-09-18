@@ -1,4 +1,4 @@
-VERSION := 0.4.0
+VERSION := 0.4.1
 APP_NAME := CPAQuotaBar
 SWIFTC ?= $(shell xcrun --find swiftc)
 SDK ?= $(shell xcrun --sdk macosx --show-sdk-path)

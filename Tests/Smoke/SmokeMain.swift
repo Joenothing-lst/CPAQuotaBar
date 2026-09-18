@@ -59,6 +59,97 @@ struct CoreSmokeTests {
             fatalError("AccountPoolType JSON backward compatibility failed")
         }
 
+        try! quotaRegressionTests()
         print("CPAQuotaCore smoke tests passed")
     }
+
+    static func quotaRegressionTests() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let weeklyData = Data("""
+        {"plan_type":"self_serve_business_prolite","rate_limit":{
+            "primary_window":{"used_percent":3,"limit_window_seconds":604800,"reset_after_seconds":600000},
+            "secondary_window":null
+        }}
+        """.utf8)
+        let weekly = try parseOpenAIUsage(weeklyData, now: now)
+        precondition(weekly.windows["primary"] == nil, "weekly quota must not appear as 5h")
+        precondition(weekly.windows["secondary"]?.remaining == 97)
+        precondition(weekly.windows["secondary"]?.windowSeconds == 604800)
+        precondition(weekly.windows["secondary"]?.resetDate == now.addingTimeInterval(600000))
+        precondition(QuotaMath.planDisplayName(weekly.planType!) == "Premium")
+        precondition(QuotaMath.planDisplayName("plus") == "Plus")
+        precondition(QuotaMath.planDisplayName("pro_lite") == "ProLite")
+        for alias in ["self_serve_business_prolite", "Premium", "ProLite", "pro_lite", "pro-lite"] {
+            precondition(QuotaMath.isProLitePlan(alias))
+            precondition(QuotaMath.planWeight(alias) == 5)
+        }
+        precondition(QuotaMath.planWeight("Pro 20x") == 20)
+        precondition(QuotaMath.planWeight("Plus") == 1)
+        precondition(QuotaMath.planWeight("unknown") == 1)
+
+        let plus = try parseOpenAIUsage(Data("""
+        {"planType":"plus","rateLimit":{
+            "primaryWindow":{"usedPercent":0,"limitWindowSeconds":18000,"resetAfterSeconds":18000},
+            "secondaryWindow":{"usedPercent":52,"limitWindowSeconds":604800,"resetAfterSeconds":86000}
+        }}
+        """.utf8), now: now)
+        precondition(plus.windows["primary"]?.remaining == 100)
+        precondition(plus.windows["secondary"]?.remaining == 48)
+
+        let legacy = try parseOpenAIUsage(Data("""
+        {"rate_limit":{"primary_window":{"used_percent":10},"secondary_window":{"used_percent":20}}}
+        """.utf8), now: now)
+        precondition(legacy.windows["primary"]?.remaining == 90)
+        precondition(legacy.windows["secondary"]?.remaining == 80)
+
+        func account(_ id: String, disabled: Bool = false, held: Bool = false,
+                     windows: [String: QuotaWindow], plan: String = "plus") -> Account {
+            Account(id: id, name: nil, label: nil, email: nil, authType: nil,
+                    planType: plan, subscriptionUntil: nil, credentialExpires: nil,
+                    hostDisabled: disabled, windows: windows, recentRequests: [],
+                    thresholdPercent: 10, held: held, unknown: false, stale: false, lastError: nil)
+        }
+        let active = account("business", windows: weekly.windows, plan: weekly.planType!)
+        let disabled = account("disabled", disabled: true, windows: plus.windows, plan: "pro_20x")
+        let held = account("held", held: true, windows: plus.windows)
+        let accounts = [active, disabled, held]
+        let primary = QuotaMath.summarizeWindow(accounts: accounts, key: "primary", now: now)
+        let secondary = QuotaMath.summarizeWindow(accounts: accounts, key: "secondary", now: now)
+        precondition(primary.remaining == nil && primary.resetDate == nil)
+        precondition(secondary.knownAccounts == 1 && secondary.remaining == 97)
+        precondition(secondary.resetDate == active.secondary?.resetDate, "disabled resets must be excluded")
+        precondition(secondary.resetProgressPercent == active.secondary?.resetProgress(now: now))
+        let allDisabled = QuotaMath.summarizeWindow(accounts: [disabled, held], key: "secondary", now: now)
+        precondition(allDisabled.remaining == nil && allDisabled.resetDate == nil)
+        let enabledPlus = account("plus", windows: plus.windows)
+        let mixed = QuotaMath.summarizeWindow(accounts: [active, enabledPlus], key: "secondary", now: now)
+        precondition(mixed.knownAccounts == 2)
+        precondition(abs(mixed.remaining! - (97 * 5.0 + 48) / 6) < 0.0001)
+        precondition(QuotaMath.summarizeWindow(accounts: [active, enabledPlus], key: "primary", now: now).remaining == 100)
+
+        // Migrate the screenshot's old cached representation: a weekly primary
+        // window and an aggregate that includes disabled Plus accounts.
+        let cachedAccount = Data("""
+        {"id":"business","windows":{"primary":{"name":"primary","used_percent":3,
+        "window_seconds":604800,"reset_at":"2026-10-17T00:00:00Z"}}}
+        """.utf8)
+        let restored = try JSONDecoder().decode(Account.self, from: cachedAccount)
+        precondition(restored.primary == nil && restored.secondary?.remaining == 97)
+        precondition(restored.secondary?.name == "secondary")
+        let summary = CPASummary(
+            generatedAt: QuotaDate.string(from: now),
+            config: RuntimeConfig(remainingThresholdPercent: 10, accountOverrides: [:]),
+            totalAccounts: 2, knownAccounts: 2, unknownAccounts: 0, heldAccounts: 1,
+            primary: WindowSummary(knownAccounts: 2, averageRemainingPercent: 99,
+                                   effectiveResetAt: nil, resetProgressPercent: nil),
+            secondary: WindowSummary(knownAccounts: 1, averageRemainingPercent: 48,
+                                     effectiveResetAt: nil, resetProgressPercent: nil),
+            recentRequests: [], accounts: [restored, disabled], lastScanAt: nil
+        )
+        let cached = try JSONDecoder().decode(CPASummary.self, from: JSONEncoder().encode(summary))
+            .recalculatingQuota(now: now)
+        precondition(cached.primary.remaining == nil && cached.secondary.remaining == 97)
+        precondition(cached.totalAccounts == 2 && cached.heldAccounts == 1)
+    }
+
 }

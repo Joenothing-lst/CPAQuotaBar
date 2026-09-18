@@ -521,12 +521,12 @@ private struct NativeAPICallRequest: Encodable {
     }
 }
 
-private struct ParsedUsage {
+struct ParsedUsage {
     let planType: String?
     let windows: [String: QuotaWindow]
 }
 
-private func parseOpenAIUsage(_ data: Data, now: Date) throws -> ParsedUsage {
+func parseOpenAIUsage(_ data: Data, now: Date) throws -> ParsedUsage {
     guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           let rateLimit = childMap(root, keys: ["rate_limit", "rateLimit"]) else {
         throw CPAError.invalidResponse
@@ -558,7 +558,7 @@ private func parseOpenAIUsage(_ data: Data, now: Date) throws -> ParsedUsage {
     }
     guard !windows.isEmpty else { throw CPAError.invalidResponse }
     let plan = (root["plan_type"] as? String ?? root["planType"] as? String)?.lowercased()
-    return ParsedUsage(planType: plan, windows: windows)
+    return ParsedUsage(planType: plan, windows: QuotaWindow.normalized(windows))
 }
 
 private func parseAntigravityUsage(_ data: Data, pool: AccountPoolType, now: Date) throws -> ParsedUsage {
@@ -719,8 +719,8 @@ private func makeSummary(accounts: [Account], settings: PluginSettings, now: Dat
         knownAccounts: known,
         unknownAccounts: accounts.count - known,
         heldAccounts: accounts.filter(\.hostDisabled).count,
-        primary: summarizeWindow(accounts: accounts, key: "primary", now: now),
-        secondary: summarizeWindow(accounts: accounts, key: "secondary", now: now),
+        primary: QuotaMath.summarizeWindow(accounts: accounts, key: "primary", now: now),
+        secondary: QuotaMath.summarizeWindow(accounts: accounts, key: "secondary", now: now),
         recentRequests: aggregateRequests(accounts),
         accounts: accounts,
         lastScanAt: timestamp,
@@ -728,47 +728,49 @@ private func makeSummary(accounts: [Account], settings: PluginSettings, now: Dat
     )
 }
 
-private func summarizeWindow(accounts: [Account], key: String, now: Date) -> WindowSummary {
-    let entries = accounts.compactMap { account -> (window: QuotaWindow, plan: String?)? in
-        guard let window = account.windows[key] else { return nil }
-        return (window, account.planType)
+extension QuotaMath {
+    public static func summarizeWindow(accounts: [Account], key: String, now: Date) -> WindowSummary {
+        let entries = accounts.compactMap { account -> (window: QuotaWindow, plan: String?)? in
+            guard !account.hostDisabled, !account.held, let window = account.windows[key] else { return nil }
+            return (window, account.planType)
+        }
+        let windows = entries.map(\.window)
+        guard !windows.isEmpty else {
+            return WindowSummary(knownAccounts: 0, averageRemainingPercent: 0, effectiveResetAt: nil, resetProgressPercent: nil)
+        }
+        let average = QuotaMath.weightedAverageRemaining(
+            entries.map { (remaining: $0.window.remaining, plan: $0.plan) }
+        ) ?? 0
+        let samples = windows.compactMap { window -> (seconds: Double, progress: Double, weight: Double)? in
+            guard let reset = window.resetDate,
+                  let duration = window.windowSeconds,
+                  duration > 0 else { return nil }
+            let seconds = reset.timeIntervalSince(now)
+            guard seconds > 0 else { return nil }
+            let progress = min(100, max(0, seconds / Double(duration) * 100))
+            return (seconds, progress, min(100, max(0, window.usedPercent)))
+        }
+        let weighted = samples.filter { $0.weight > 0 }
+        let seconds: Double?
+        let progress: Double?
+        if !weighted.isEmpty {
+            let weight = weighted.reduce(0) { $0 + $1.weight }
+            seconds = weighted.reduce(0) { $0 + $1.seconds * $1.weight } / weight
+            progress = weighted.reduce(0) { $0 + $1.progress * $1.weight } / weight
+        } else if !samples.isEmpty {
+            seconds = samples.reduce(0) { $0 + $1.seconds } / Double(samples.count)
+            progress = samples.reduce(0) { $0 + $1.progress } / Double(samples.count)
+        } else {
+            seconds = nil
+            progress = nil
+        }
+        return WindowSummary(
+            knownAccounts: windows.count,
+            averageRemainingPercent: average,
+            effectiveResetAt: seconds.map { QuotaDate.string(from: now.addingTimeInterval($0)) },
+            resetProgressPercent: progress
+        )
     }
-    let windows = entries.map(\.window)
-    guard !windows.isEmpty else {
-        return WindowSummary(knownAccounts: 0, averageRemainingPercent: 0, effectiveResetAt: nil, resetProgressPercent: nil)
-    }
-    let average = QuotaMath.weightedAverageRemaining(
-        entries.map { (remaining: $0.window.remaining, plan: $0.plan) }
-    ) ?? 0
-    let samples = windows.compactMap { window -> (seconds: Double, progress: Double, weight: Double)? in
-        guard let reset = window.resetDate,
-              let duration = window.windowSeconds,
-              duration > 0 else { return nil }
-        let seconds = reset.timeIntervalSince(now)
-        guard seconds > 0 else { return nil }
-        let progress = min(100, max(0, seconds / Double(duration) * 100))
-        return (seconds, progress, min(100, max(0, window.usedPercent)))
-    }
-    let weighted = samples.filter { $0.weight > 0 }
-    let seconds: Double?
-    let progress: Double?
-    if !weighted.isEmpty {
-        let weight = weighted.reduce(0) { $0 + $1.weight }
-        seconds = weighted.reduce(0) { $0 + $1.seconds * $1.weight } / weight
-        progress = weighted.reduce(0) { $0 + $1.progress * $1.weight } / weight
-    } else if !samples.isEmpty {
-        seconds = samples.reduce(0) { $0 + $1.seconds } / Double(samples.count)
-        progress = samples.reduce(0) { $0 + $1.progress } / Double(samples.count)
-    } else {
-        seconds = nil
-        progress = nil
-    }
-    return WindowSummary(
-        knownAccounts: windows.count,
-        averageRemainingPercent: average,
-        effectiveResetAt: seconds.map { QuotaDate.string(from: now.addingTimeInterval($0)) },
-        resetProgressPercent: progress
-    )
 }
 
 private func aggregateRequests(_ accounts: [Account]) -> [RequestBucket] {
