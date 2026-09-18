@@ -109,36 +109,16 @@ struct RootView: View {
     @UIState private var accountsMasked = false
     let preferredHeight: (CGFloat) -> Void
 
-    private var panelHeight: CGFloat {
-        if showingSettings { return 700 }
-        if model.summary == nil {
-            return model.isPoolLoading && accountsExpanded ? 430 : 340
-        }
-        return dashboardHeight(accountsExpanded: accountsExpanded)
-    }
+    @UIState private var measuredDashboardHeight: CGFloat = 340
 
-    private func dashboardHeight(accountsExpanded: Bool) -> CGFloat {
-        let navBarHeight: CGFloat = 46
-        if accountsExpanded {
-            let count = model.sortedAccounts.count
-            let viewportHeight = accountViewportHeight(count: count)
-            return min(720, 336 + navBarHeight + viewportHeight)
-        }
-        return 335 + navBarHeight
+    private var panelHeight: CGFloat {
+        showingSettings ? 700 : min(720, measuredDashboardHeight)
     }
 
     private func toggleAccounts() {
-        let willExpand = !accountsExpanded
-        guard !showingSettings else {
-            accountsExpanded = willExpand
-            return
-        }
-        // 内外容器在同一微秒同步延伸/收缩，轻微加速减速物理效果，无任何弹跳
-        let targetHeight = dashboardHeight(accountsExpanded: willExpand)
-        preferredHeight(targetHeight)
-        withAnimation(.easeInOut(duration: 0.26)) {
-            accountsExpanded = willExpand
-        }
+        // The measured content requests the final height. NSPopover animates
+        // the resize; animating this layout too would report intermediate sizes.
+        accountsExpanded.toggle()
     }
 
     var body: some View {
@@ -156,15 +136,30 @@ struct RootView: View {
                         SettingsView(model: model) { showingSettings = false }
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     } else {
-                        DashboardView(
-                            model: model,
-                            accountsExpanded: accountsExpanded,
-                            accountsMasked: accountsMasked,
-                            toggleAccounts: toggleAccounts,
-                            toggleAccountsMask: { accountsMasked.toggle() }
-                        ) {
-                            showingSettings = true
+                        ScrollView {
+                            DashboardView(
+                                model: model,
+                                accountsExpanded: accountsExpanded,
+                                accountsMasked: accountsMasked,
+                                toggleAccounts: toggleAccounts,
+                                toggleAccountsMask: { accountsMasked.toggle() }
+                            ) {
+                                showingSettings = true
+                            }
+                            // Measure the full intrinsic content, including its
+                            // bottom inset, independently of the window height.
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { geometry in
+                                ceil(geometry.size.height)
+                            } action: { height in
+                                guard height > 0 else { return }
+                                measuredDashboardHeight = height
+                                if !showingSettings { preferredHeight(panelHeight) }
+                            }
                         }
+                        // When the screen caps the popover height, the bottom
+                        // of the dashboard remains reachable instead of clipped.
+                        .scrollBounceBehavior(.basedOnSize)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                     Spacer(minLength: 0)
@@ -179,14 +174,11 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.26), value: showingSettings)
         .onAppear { preferredHeight(panelHeight) }
         .onChange(of: showingSettings) { _, _ in preferredHeight(panelHeight) }
-        .onChange(of: model.sortedAccounts.count) { _, _ in preferredHeight(panelHeight) }
-        .onChange(of: model.isPoolLoading) { _, _ in preferredHeight(panelHeight) }
         .onChange(of: model.selectedPool) { _, _ in
             // 没有目标池缓存时，网络返回后直接展示账号池，避免用户还要再次点击展开。
             if model.summary == nil {
                 accountsExpanded = true
             }
-            preferredHeight(panelHeight)
         }
     }
 }
@@ -216,7 +208,7 @@ private struct DashboardView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
-        .padding(.bottom, 4)
+        .padding(.bottom, 16)
     }
 
     private var accountPoolNavBar: some View {
