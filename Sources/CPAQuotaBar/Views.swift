@@ -159,6 +159,7 @@ struct RootView: View {
                         }
                         // When the screen caps the popover height, the bottom
                         // of the dashboard remains reachable instead of clipped.
+                        .scrollIndicators(.never)
                         .scrollBounceBehavior(.basedOnSize)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     }
@@ -464,6 +465,7 @@ private struct DashboardView: View {
                             }
                         }
                     }
+                    .scrollIndicators(.never)
                     .frame(height: viewportHeight)
                 }
             }
