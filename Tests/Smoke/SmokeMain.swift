@@ -60,6 +60,7 @@ struct CoreSmokeTests {
         }
 
         try! quotaRegressionTests()
+        try! antigravityQuotaRegressionTests()
         print("CPAQuotaCore smoke tests passed")
     }
 
@@ -150,6 +151,100 @@ struct CoreSmokeTests {
             .recalculatingQuota(now: now)
         precondition(cached.primary.remaining == nil && cached.secondary.remaining == 97)
         precondition(cached.totalAccounts == 2 && cached.heldAccounts == 1)
+    }
+
+    static func antigravityQuotaRegressionTests() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let multiGroupJSON = """
+        {
+          "groups": [
+            {
+              "buckets": [
+                {
+                  "bucketId": "gemini-weekly",
+                  "displayName": "Weekly Limit Remaining",
+                  "window": "weekly",
+                  "resetTime": "2026-10-19T05:37:58Z",
+                  "remainingFraction": 0.92
+                },
+                {
+                  "bucketId": "gemini-5h",
+                  "displayName": "Five Hour Limit Remaining",
+                  "window": "5h",
+                  "resetTime": "2026-10-17T22:31:43Z",
+                  "remainingFraction": 1.0
+                }
+              ],
+              "displayName": "Gemini Models",
+              "description": "Models within this group: Gemini Flash, Gemini Pro"
+            },
+            {
+              "buckets": [
+                {
+                  "bucketId": "3p-weekly",
+                  "displayName": "Weekly Limit Remaining",
+                  "window": "weekly",
+                  "resetTime": "2026-10-24T17:31:43Z",
+                  "remainingFraction": 0.54
+                },
+                {
+                  "bucketId": "3p-5h",
+                  "displayName": "Five Hour Limit Remaining",
+                  "window": "5h",
+                  "resetTime": "2026-10-17T22:31:43Z",
+                  "remainingFraction": 0.086
+                }
+              ],
+              "displayName": "Claude and GPT models",
+              "description": "Models within this group: Claude Opus, Claude Sonnet, GPT-OSS"
+            }
+          ]
+        }
+        """
+        let multiData = Data(multiGroupJSON.utf8)
+
+        // 1. 同一 Antigravity 数据在 Gemini 页面下必须提取 Gemini 分组配额
+        let geminiUsage = try parseAntigravityUsage(multiData, pool: .gemini, now: now)
+        precondition(geminiUsage.windows["primary"]?.remaining == 100.0, "Gemini 5h quota should be 100%")
+        precondition(abs(geminiUsage.windows["secondary"]!.remaining - 92.0) < 0.01, "Gemini weekly quota should be 92%")
+
+        // 2. 同一 Antigravity 数据在 Claude 页面下必须提取 Claude/3P 分组配额
+        let claudeUsage = try parseAntigravityUsage(multiData, pool: .claude, now: now)
+        precondition(abs(claudeUsage.windows["primary"]!.remaining - 8.6) < 0.01, "Claude 5h quota should be 8.6%")
+        precondition(abs(claudeUsage.windows["secondary"]!.remaining - 54.0) < 0.01, "Claude weekly quota should be 54%")
+
+        // 3. 验证两者绝非相同额度
+        precondition(geminiUsage.windows["primary"]?.remaining != claudeUsage.windows["primary"]?.remaining,
+                     "Gemini and Claude primary quota must be different in the same account")
+        precondition(geminiUsage.windows["secondary"]?.remaining != claudeUsage.windows["secondary"]?.remaining,
+                     "Gemini and Claude secondary quota must be different in the same account")
+
+        // 4. 验证缺少对应分组时（如 daily-cloudcode-pa 仅返回 3p），严禁错误回退
+        let claudeOnlyJSON = """
+        {
+          "groups": [
+            {
+              "buckets": [
+                {
+                  "bucketId": "3p-weekly",
+                  "displayName": "Weekly Limit Remaining",
+                  "window": "weekly",
+                  "remainingFraction": 0.5
+                }
+              ],
+              "displayName": "Claude and GPT models"
+            }
+          ]
+        }
+        """
+        let claudeOnlyData = Data(claudeOnlyJSON.utf8)
+        var geminiFailedAsExpected = false
+        do {
+            _ = try parseAntigravityUsage(claudeOnlyData, pool: .gemini, now: now)
+        } catch {
+            geminiFailedAsExpected = true
+        }
+        precondition(geminiFailedAsExpected, "Parsing Gemini quota from a Claude-only response must throw an error to trigger next endpoint")
     }
 
 }

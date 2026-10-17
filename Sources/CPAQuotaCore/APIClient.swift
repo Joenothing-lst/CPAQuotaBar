@@ -151,8 +151,7 @@ public struct CPAClient: Sendable {
             var resolvedPlan: String? = nil
 
             if isAntigravity {
-                let data = try await fetchAntigravityQuota(for: file)
-                parsed = try parseAntigravityUsage(data, pool: pool, now: now)
+                parsed = try await fetchAntigravityQuota(for: file, pool: pool, now: now)
                 let tier = await fetchAntigravityTier(for: file)
                 resolvedPlan = tier ?? "Pro"
             } else if rawType == "claude" {
@@ -226,14 +225,18 @@ public struct CPAClient: Sendable {
         return try await executeAPICall(payload)
     }
 
-    private func fetchAntigravityQuota(for file: NativeAuthFile) async throws -> Data {
+    private func fetchAntigravityQuota(
+        for file: NativeAuthFile,
+        pool: AccountPoolType,
+        now: Date
+    ) async throws -> ParsedUsage {
         guard !file.authIndex.isEmpty else { throw CPAError.invalidResponse }
         let projectID = file.projectID ?? ""
         let bodyData = "{\"project\":\"\(projectID)\"}"
         let endpoints = [
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
             "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
             "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
-            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
         ]
         let headers = [
             "Authorization": "Bearer $TOKEN$",
@@ -252,7 +255,7 @@ public struct CPAClient: Sendable {
             )
             do {
                 let data = try await executeAPICall(payload)
-                return data
+                return try parseAntigravityUsage(data, pool: pool, now: now)
             } catch {
                 lastError = error
                 continue
@@ -279,20 +282,29 @@ public struct CPAClient: Sendable {
 
     private func fetchAntigravityTier(for file: NativeAuthFile) async -> String? {
         guard !file.authIndex.isEmpty else { return nil }
-        let payload = NativeAPICallRequest(
-            authIndex: file.authIndex,
-            method: "POST",
-            url: "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-            header: [
-                "Authorization": "Bearer $TOKEN$",
-                "Content-Type": "application/json",
-                "User-Agent": "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
-            ],
-            data: "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"
-        )
-        do {
-            let data = try await executeAPICall(payload)
-            guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let endpoints = [
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+        ]
+        let headers = [
+            "Authorization": "Bearer $TOKEN$",
+            "Content-Type": "application/json",
+            "User-Agent": "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
+        ]
+        let bodyData = "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"
+
+        for endpoint in endpoints {
+            let payload = NativeAPICallRequest(
+                authIndex: file.authIndex,
+                method: "POST",
+                url: endpoint,
+                header: headers,
+                data: bodyData
+            )
+            guard let data = try? await executeAPICall(payload),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
             if let paidTier = root["paidTier"] as? [String: Any] ?? root["paid_tier"] as? [String: Any] {
                 let id = (paidTier["id"] as? String ?? "").lowercased()
                 let name = paidTier["name"] as? String ?? ""
@@ -311,9 +323,8 @@ public struct CPAClient: Sendable {
                 }
             }
             return "Free"
-        } catch {
-            return nil
         }
+        return nil
     }
 
     private func executeAPICall(_ payload: NativeAPICallRequest) async throws -> Data {
@@ -561,7 +572,7 @@ func parseOpenAIUsage(_ data: Data, now: Date) throws -> ParsedUsage {
     return ParsedUsage(planType: plan, windows: QuotaWindow.normalized(windows))
 }
 
-private func parseAntigravityUsage(_ data: Data, pool: AccountPoolType, now: Date) throws -> ParsedUsage {
+func parseAntigravityUsage(_ data: Data, pool: AccountPoolType, now: Date) throws -> ParsedUsage {
     guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
           let groups = root["groups"] as? [[String: Any]],
           !groups.isEmpty else {
@@ -569,26 +580,22 @@ private func parseAntigravityUsage(_ data: Data, pool: AccountPoolType, now: Dat
     }
 
     // 根据选择的账号池提取对应的分组：
-    // pool == .gemini 优先匹配包含 "gemini" 的模型分组
-    // pool == .claude 优先匹配包含 "claude"、"3p"、"gpt" 的模型分组
+    // pool == .gemini 严格匹配 Gemini 模型分组
+    // pool == .claude 严格匹配 Claude / 3P / GPT 模型分组
+    // 两个池使用独立的配额分组，禁止降级回退到彼此的组
     let targetGroup: [String: Any]?
     switch pool {
     case .gemini:
-        targetGroup = groups.first { g in
-            let name = (g["displayName"] as? String ?? g["display_name"] as? String ?? "").lowercased()
-            return name.contains("gemini")
-        } ?? groups.first
+        targetGroup = groups.first { isGeminiQuotaGroup($0) }
     case .claude:
-        targetGroup = groups.first { g in
-            let name = (g["displayName"] as? String ?? g["display_name"] as? String ?? "").lowercased()
-            return name.contains("claude") || name.contains("3p") || name.contains("gpt")
-        } ?? (groups.count > 1 ? groups[1] : groups.first)
+        targetGroup = groups.first { isClaudeQuotaGroup($0) }
     case .openai:
-        targetGroup = groups.first
+        targetGroup = nil
     }
 
     guard let chosen = targetGroup,
-          let buckets = chosen["buckets"] as? [[String: Any]] else {
+          let buckets = chosen["buckets"] as? [[String: Any]],
+          !buckets.isEmpty else {
         throw CPAError.invalidResponse
     }
 
@@ -630,6 +637,36 @@ private func parseAntigravityUsage(_ data: Data, pool: AccountPoolType, now: Dat
 
     guard !windows.isEmpty else { throw CPAError.invalidResponse }
     return ParsedUsage(planType: "Antigravity", windows: windows)
+}
+
+private func isGeminiQuotaGroup(_ group: [String: Any]) -> Bool {
+    let name = (group["displayName"] as? String ?? group["display_name"] as? String ?? "").lowercased()
+    let desc = (group["description"] as? String ?? "").lowercased()
+    if name.contains("gemini") || desc.contains("gemini") { return true }
+    if let buckets = group["buckets"] as? [[String: Any]] {
+        for bucket in buckets {
+            let bId = (bucket["bucketId"] as? String ?? bucket["bucket_id"] as? String ?? "").lowercased()
+            let bName = (bucket["displayName"] as? String ?? bucket["display_name"] as? String ?? "").lowercased()
+            if bId.contains("gemini") || bName.contains("gemini") { return true }
+        }
+    }
+    return false
+}
+
+private func isClaudeQuotaGroup(_ group: [String: Any]) -> Bool {
+    let name = (group["displayName"] as? String ?? group["display_name"] as? String ?? "").lowercased()
+    let desc = (group["description"] as? String ?? "").lowercased()
+    if name.contains("claude") || name.contains("3p") || name.contains("gpt") ||
+       desc.contains("claude") || desc.contains("gpt") { return true }
+    if let buckets = group["buckets"] as? [[String: Any]] {
+        for bucket in buckets {
+            let bId = (bucket["bucketId"] as? String ?? bucket["bucket_id"] as? String ?? "").lowercased()
+            let bName = (bucket["displayName"] as? String ?? bucket["display_name"] as? String ?? "").lowercased()
+            if bId.contains("3p") || bId.contains("claude") || bId.contains("gpt") ||
+               bName.contains("claude") || bName.contains("gpt") { return true }
+        }
+    }
+    return false
 }
 
 private func parseClaudeUsage(_ data: Data, now: Date) throws -> ParsedUsage {
