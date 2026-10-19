@@ -6,7 +6,7 @@
 
 采用原生 macOS 界面，支持账号池切换、双窗口额度圆环、请求统计和按阈值自动禁用账号。应用直接连接 CPA，无需安装额外的额度插件，也没有第三方 Swift 包依赖。
 
-**当前版本：0.4.1 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
+**当前版本：0.4.3 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
 
 ## 界面展示
 

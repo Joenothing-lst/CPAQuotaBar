@@ -6,7 +6,7 @@ A native macOS menu bar quota monitor designed to inspect remaining limits and r
 
 Built with native macOS Liquid Glass aesthetics, CPAQuotaBar supports account pool switching, dual-ring quota dials, real-time request statistics, and threshold-based automatic account disabling. The app connects directly to CPA without requiring additional quota plugins or third-party Swift package dependencies.
 
-**Current Version: 0.4.1 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
+**Current Version: 0.4.3 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
 
 ## Preview
 

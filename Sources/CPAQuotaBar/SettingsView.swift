@@ -14,8 +14,8 @@ struct SettingsView: View {
 
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    connectionCard
                     updateCard
+                    connectionCard
                     quotaPolicyCard
                     refreshCard
                     accountOverrideCard
@@ -113,10 +113,12 @@ struct SettingsView: View {
 
     private var updateCard: some View {
         SettingsCard(title: "应用更新", icon: "arrow.triangle.2.circlepath") {
-            VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 12) {
                 Text(updateDescription)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button(action: updateAction) {
                     HStack(spacing: 7) {
                         if case .checking = model.updateState {
@@ -299,6 +301,7 @@ private struct SettingsCard<Content: View>: View {
                 .font(.subheadline.weight(.semibold))
             content
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .font(.caption)
         .padding(14)
         .quotaGlass(cornerRadius: 18, tint: .accentColor.opacity(0.035))

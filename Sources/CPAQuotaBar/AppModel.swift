@@ -323,7 +323,7 @@ final class AppModel: ObservableObject {
         updateState = .checking
         do {
             var request = URLRequest(url: Self.latestReleaseURL)
-            request.setValue("CPAQuotaBar/0.4.1", forHTTPHeaderField: "User-Agent")
+            request.setValue("CPAQuotaBar/0.4.3", forHTTPHeaderField: "User-Agent")
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -394,7 +394,7 @@ final class AppModel: ObservableObject {
 
     private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Joenothing-lst/CPAQuotaBar/releases/latest")!
     private static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.1"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.3"
     }
 
     private struct GitHubRelease: Decodable {
