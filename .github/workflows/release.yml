@@ -1,0 +1,117 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.4.4, leave empty to use Makefile VERSION)"
+        required: false
+        type: string
+      title:
+        description: "Optional release title"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish macOS arm64 Release
+    runs-on: macos-26
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode toolchain
+        run: |
+          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcrun --find swiftc
+          xcrun swiftc --version
+          xcrun --sdk macosx --show-sdk-path
+          xcrun --sdk macosx --show-sdk-version
+
+      - name: Resolve version and tag
+        id: meta
+        run: |
+          MAKEFILE_VERSION="$(awk -F':=' '/^VERSION/ {gsub(/[[:space:]]/, "", $2); print $2}' Makefile)"
+          INPUT_TAG="${{ inputs.tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v${MAKEFILE_VERSION}"
+          fi
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=CPA-Quota-Bar-${VERSION}-macos-arm64.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke and regression tests
+        run: make test VERSION="${{ steps.meta.outputs.version }}"
+
+      - name: Build and package macOS app
+        run: |
+          make dist VERSION="${{ steps.meta.outputs.version }}"
+          codesign --verify --deep --strict "dist/CPA Quota Bar.app"
+          ls -lh "dist/${{ steps.meta.outputs.zip_name }}" "dist/${{ steps.meta.outputs.zip_name }}.sha256"
+          cat "dist/${{ steps.meta.outputs.zip_name }}.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: CPA-Quota-Bar-${{ steps.meta.outputs.version }}-macos-arm64
+          path: |
+            dist/${{ steps.meta.outputs.zip_name }}
+            dist/${{ steps.meta.outputs.zip_name }}.sha256
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
+          CUSTOM_TITLE: ${{ inputs.title }}
+        run: |
+          ZIP_PATH="dist/${ZIP_NAME}"
+          SHA_PATH="dist/${ZIP_NAME}.sha256"
+          SHA256_VALUE="$(awk '{print $1}' "$SHA_PATH")"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP_PATH" "$SHA_PATH" --clobber
+          else
+            TAG_SUBJECT="$(git tag -l --format='%(contents:subject)' "$TAG" | head -n 1)"
+            TAG_BODY="$(git tag -l --format='%(contents:body)' "$TAG")"
+            TITLE="${CUSTOM_TITLE:-${TAG_SUBJECT:-${TAG}}}"
+            NOTES_FILE="$(mktemp)"
+            if [ -n "$TAG_BODY" ]; then
+              printf "%s\n\n" "$TAG_BODY" > "$NOTES_FILE"
+            fi
+            {
+              echo "### 安装与升级"
+              echo "- 已安装旧版的用户可直接在应用“设置 → 应用更新”中点击检查并一键更新，应用会自动下载校验并重启。"
+              echo "- 也可手动下载 \`${ZIP_NAME}\`，解压后替换 \`/Applications\` 中的应用。"
+              echo "- 适用于 Apple Silicon、macOS 26.2 及以上。安装包采用 ad-hoc 签名，并提供 SHA-256 校验文件。"
+              echo ""
+              echo "### 校验信息"
+              echo "- **文件名**: \`${ZIP_NAME}\`"
+              echo "- **SHA-256**: \`${SHA256_VALUE}\`"
+            } >> "$NOTES_FILE"
+
+            if [ -n "$TAG_BODY" ]; then
+              gh release create "$TAG" "$ZIP_PATH" "$SHA_PATH" \
+                --title "$TITLE" \
+                --notes-file "$NOTES_FILE"
+            else
+              gh release create "$TAG" "$ZIP_PATH" "$SHA_PATH" \
+                --title "$TITLE" \
+                --notes-file "$NOTES_FILE" \
+                --generate-notes
+            fi
+          fi

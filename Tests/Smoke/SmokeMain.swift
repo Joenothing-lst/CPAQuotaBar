@@ -84,9 +84,22 @@ struct CoreSmokeTests {
             precondition(QuotaMath.isProLitePlan(alias))
             precondition(QuotaMath.planWeight(alias) == 5)
         }
+        for alias in ["Ultra-Lite", "ultra-lite", "ultralite", "g1-ultra-lite-tier"] {
+            precondition(QuotaMath.planWeight(alias) == 5)
+            precondition(QuotaMath.planDisplayName(alias) == "Ultra-Lite")
+        }
+        for alias in ["Ultra", "ultra", "g1-ultra-tier"] {
+            precondition(QuotaMath.planWeight(alias) == 20)
+            precondition(QuotaMath.planDisplayName(alias) == "Ultra")
+        }
         precondition(QuotaMath.planWeight("Pro 20x") == 20)
         precondition(QuotaMath.planWeight("Plus") == 1)
+        precondition(QuotaMath.planWeight("Pro") == 1)
         precondition(QuotaMath.planWeight("unknown") == 1)
+        precondition(abs(QuotaMath.weightedAverageRemaining([
+            (remaining: 0, plan: "Pro"),
+            (remaining: 100, plan: "Ultra"),
+        ])! - (2000.0 / 21.0)) < 0.0001)
 
         let plus = try parseOpenAIUsage(Data("""
         {"planType":"plus","rateLimit":{

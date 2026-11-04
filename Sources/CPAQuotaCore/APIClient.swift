@@ -234,14 +234,14 @@ public struct CPAClient: Sendable {
         let projectID = file.projectID ?? ""
         let bodyData = "{\"project\":\"\(projectID)\"}"
         let endpoints = [
-            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
             "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
             "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
         ]
         let headers = [
             "Authorization": "Bearer $TOKEN$",
             "Content-Type": "application/json",
-            "User-Agent": "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)",
+            "User-Agent": "antigravity/hub/2.23.0 darwin/arm64",
         ]
 
         var lastError: Error?
@@ -283,13 +283,13 @@ public struct CPAClient: Sendable {
     private func fetchAntigravityTier(for file: NativeAuthFile) async -> String? {
         guard !file.authIndex.isEmpty else { return nil }
         let endpoints = [
-            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
             "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
         ]
         let headers = [
             "Authorization": "Bearer $TOKEN$",
             "Content-Type": "application/json",
-            "User-Agent": "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
+            "User-Agent": "antigravity/hub/2.23.0 darwin/arm64"
         ]
         let bodyData = "{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"
 
@@ -308,17 +308,21 @@ public struct CPAClient: Sendable {
             if let paidTier = root["paidTier"] as? [String: Any] ?? root["paid_tier"] as? [String: Any] {
                 let id = (paidTier["id"] as? String ?? "").lowercased()
                 let name = paidTier["name"] as? String ?? ""
-                if id.contains("ultra-lite") { return "Ultra-Lite" }
-                if id.contains("ultra") { return "Ultra" }
-                if id.contains("pro") || name.lowercased().contains("pro") { return "Pro" }
+                let lowerName = name.lowercased()
+                if id.contains("ultra-lite") || id.contains("ultralite") || lowerName.contains("ultra-lite") || lowerName.contains("ultralite") { return "Ultra-Lite" }
+                if id.contains("ultra") || lowerName.contains("ultra") { return "Ultra" }
+                if id.contains("pro") || lowerName.contains("pro") { return "Pro" }
                 if !name.isEmpty { return name }
             }
             if let currentTier = root["currentTier"] as? [String: Any] ?? root["current_tier"] as? [String: Any] {
                 let id = (currentTier["id"] as? String ?? "").lowercased()
+                let name = currentTier["name"] as? String ?? ""
+                let lowerName = name.lowercased()
                 if id.contains("free") { return "Free" }
-                if id.contains("pro") { return "Pro" }
-                if id.contains("ultra") { return "Ultra" }
-                if let name = currentTier["name"] as? String, !name.isEmpty, name.lowercased() != "antigravity" {
+                if id.contains("ultra-lite") || id.contains("ultralite") || lowerName.contains("ultra-lite") || lowerName.contains("ultralite") { return "Ultra-Lite" }
+                if id.contains("ultra") || lowerName.contains("ultra") { return "Ultra" }
+                if id.contains("pro") || lowerName.contains("pro") { return "Pro" }
+                if !name.isEmpty, lowerName != "antigravity" {
                     return name
                 }
             }

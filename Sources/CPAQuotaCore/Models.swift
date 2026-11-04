@@ -475,6 +475,8 @@ public enum QuotaMath {
         switch normalizedPlan(plan) {
         case "selfservebusinessprolite", "premium": return "Premium"
         case "prolite": return "ProLite"
+        case "ultralite", "g1ultralitetier": return "Ultra-Lite"
+        case "ultra", "g1ultratier": return "Ultra"
         default: return plan.prefix(1).uppercased() + String(plan.dropFirst()).lowercased()
         }
     }
@@ -488,12 +490,12 @@ public enum QuotaMath {
         (plan ?? "").lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
-    /// Returns the relative quota capacity for a Codex plan.
-    /// Unknown or missing plans use the Plus capacity as a safe default.
+    /// Returns the relative quota capacity for a plan.
+    /// Unknown or missing plans use 1x capacity as a safe default.
     public static func planWeight(_ plan: String?) -> Double {
         let normalized = normalizedPlan(plan)
-        if isProLitePlan(plan) { return 5 }
-        if normalized.contains("20x") || normalized.contains("pro20") { return 20 }
+        if isProLitePlan(plan) || normalized.contains("ultralite") { return 5 }
+        if normalized.contains("20x") || normalized.contains("pro20") || normalized.contains("ultra") { return 20 }
         if normalized.contains("5x") || normalized.contains("pro5") { return 5 }
         return 1
     }

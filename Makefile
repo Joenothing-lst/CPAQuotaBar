@@ -1,4 +1,4 @@
-VERSION := 0.4.3
+VERSION := 0.4.4
 APP_NAME := CPAQuotaBar
 SWIFTC ?= $(shell xcrun --find swiftc)
 SDK ?= $(shell xcrun --sdk macosx --show-sdk-path)
@@ -23,6 +23,7 @@ build:
 	"$(SWIFTC)" -target "$(TARGET)" -sdk "$(SDK)" -module-cache-path "$(MODULE_CACHE)" -O -parse-as-library -module-name CPAQuotaBar $(CORE_SOURCES) $(APP_SOURCES) -framework SwiftUI -framework AppKit -o "$(BUILD_DIR)/$(APP_NAME)"
 
 app: build
+	rm -rf "$(APP_DIR)"
 	mkdir -p "$(APP_DIR)/Contents/MacOS"
 	mkdir -p "$(APP_DIR)/Contents/Resources"
 	install -m 755 "$(BUILD_DIR)/$(APP_NAME)" "$(APP_DIR)/Contents/MacOS/$(APP_NAME)"
@@ -31,7 +32,9 @@ app: build
 	codesign --force --deep --sign - "$(APP_DIR)"
 
 dist: app
+	rm -f "$(ZIP_NAME)" "$(ZIP_NAME).sha256"
 	cd "$(DIST_DIR)" && zip -r -X "CPA-Quota-Bar-$(VERSION)-macos-arm64.zip" "CPA Quota Bar.app"
+	cd "$(DIST_DIR)" && shasum -a 256 "CPA-Quota-Bar-$(VERSION)-macos-arm64.zip" > "CPA-Quota-Bar-$(VERSION)-macos-arm64.zip.sha256"
 
 clean:
 	swift package clean

@@ -25,7 +25,16 @@ final class CPAQuotaCoreTests: XCTestCase {
             XCTAssertTrue(QuotaMath.isProLitePlan(plan))
             XCTAssertEqual(QuotaMath.planWeight(plan), 5)
         }
+        for plan in ["Ultra-Lite", "ultra-lite", "ultralite", "g1-ultra-lite-tier"] {
+            XCTAssertEqual(QuotaMath.planDisplayName(plan), "Ultra-Lite")
+            XCTAssertEqual(QuotaMath.planWeight(plan), 5)
+        }
+        for plan in ["Ultra", "ultra", "g1-ultra-tier"] {
+            XCTAssertEqual(QuotaMath.planDisplayName(plan), "Ultra")
+            XCTAssertEqual(QuotaMath.planWeight(plan), 20)
+        }
         XCTAssertEqual(QuotaMath.planWeight("Plus"), 1)
+        XCTAssertEqual(QuotaMath.planWeight("Pro"), 1)
         XCTAssertEqual(QuotaMath.planWeight("Pro 5x"), 5)
         XCTAssertEqual(QuotaMath.planWeight("pro5x"), 5)
         XCTAssertEqual(QuotaMath.planWeight("pro_20x"), 20)
@@ -37,6 +46,14 @@ final class CPAQuotaCoreTests: XCTestCase {
                 (remaining: 0, plan: "Pro 20x"),
             ])!,
             100.0 / 21.0,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            QuotaMath.weightedAverageRemaining([
+                (remaining: 100, plan: "Pro"),
+                (remaining: 50, plan: "Ultra"),
+            ])!,
+            (100.0 + 50.0 * 20.0) / 21.0,
             accuracy: 0.0001
         )
         XCTAssertEqual(

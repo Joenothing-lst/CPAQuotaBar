@@ -869,7 +869,7 @@ private struct PlanTag: View {
     }
     private var color: Color {
         if QuotaMath.isProLitePlan(plan) { return .orange }
-        switch plan.lowercased() {
+        switch QuotaMath.planDisplayName(plan).lowercased() {
         case "plus": return .purple
         case "team": return AppPalette.blue
         case "pro": return .orange
