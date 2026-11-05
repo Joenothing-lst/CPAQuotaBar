@@ -103,7 +103,12 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP_PATH" "$SHA_PATH" --clobber
-            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE"
+            gh release edit "$TAG" \
+              --tag "$TAG" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --draft=false \
+              --latest
           else
             if [ -n "$TAG_BODY" ]; then
               gh release create "$TAG" "$ZIP_PATH" "$SHA_PATH" \
