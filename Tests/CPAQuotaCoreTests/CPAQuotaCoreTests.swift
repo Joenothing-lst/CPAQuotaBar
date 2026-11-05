@@ -64,6 +64,34 @@ final class CPAQuotaCoreTests: XCTestCase {
             100.0 / 6.0,
             accuracy: 0.0001
         )
+        let now = Date(timeIntervalSince1970: 1_000)
+        let proWindow = QuotaWindow(
+            name: "secondary",
+            usedPercent: 10,
+            resetAt: QuotaDate.string(from: now.addingTimeInterval(86_400)),
+            windowSeconds: 604_800
+        )
+        let ultraWindow = QuotaWindow(
+            name: "secondary",
+            usedPercent: 5,
+            resetAt: QuotaDate.string(from: now.addingTimeInterval(518_400)),
+            windowSeconds: 604_800
+        )
+        let proAccount = Account(
+            id: "pro", name: nil, label: nil, email: nil, authType: nil,
+            planType: "Pro", subscriptionUntil: nil, credentialExpires: nil,
+            hostDisabled: false, windows: ["secondary": proWindow], recentRequests: [],
+            thresholdPercent: 10, held: false, unknown: false, stale: false, lastError: nil
+        )
+        let ultraAccount = Account(
+            id: "ultra", name: nil, label: nil, email: nil, authType: nil,
+            planType: "Ultra", subscriptionUntil: nil, credentialExpires: nil,
+            hostDisabled: false, windows: ["secondary": ultraWindow], recentRequests: [],
+            thresholdPercent: 10, held: false, unknown: false, stale: false, lastError: nil
+        )
+        let summary = QuotaMath.summarizeWindow(accounts: [proAccount, ultraAccount], key: "secondary", now: now)
+        let expectedProgress = ((86_400.0 / 604_800.0 * 100.0) * 1.0 + (518_400.0 / 604_800.0 * 100.0) * 20.0) / 21.0
+        XCTAssertEqual(summary.resetProgressPercent!, expectedProgress, accuracy: 0.0001)
     }
 
     func testPluginSettingsUsesCPAKeys() throws {

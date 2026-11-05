@@ -139,6 +139,10 @@ struct CoreSmokeTests {
         let mixed = QuotaMath.summarizeWindow(accounts: [active, enabledPlus], key: "secondary", now: now)
         precondition(mixed.knownAccounts == 2)
         precondition(abs(mixed.remaining! - (97 * 5.0 + 48) / 6) < 0.0001)
+        let expectedProgress = (active.secondary!.resetProgress(now: now)! * 5.0 + enabledPlus.secondary!.resetProgress(now: now)!) / 6.0
+        precondition(abs(mixed.resetProgressPercent! - expectedProgress) < 0.0001, "reset progress must be weighted by plan capacity")
+        let expectedSeconds = (600000.0 * 5.0 + 86000.0) / 6.0
+        precondition(abs(mixed.resetDate!.timeIntervalSince(now) - expectedSeconds) < 1.0, "effective reset time must be weighted by plan capacity")
         precondition(QuotaMath.summarizeWindow(accounts: [active, enabledPlus], key: "primary", now: now).remaining == 100)
 
         // Migrate the screenshot's old cached representation: a weekly primary

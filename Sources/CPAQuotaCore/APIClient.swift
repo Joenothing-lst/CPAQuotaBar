@@ -782,25 +782,24 @@ extension QuotaMath {
         let average = QuotaMath.weightedAverageRemaining(
             entries.map { (remaining: $0.window.remaining, plan: $0.plan) }
         ) ?? 0
-        let samples = windows.compactMap { window -> (seconds: Double, progress: Double, weight: Double)? in
+        let samples = entries.compactMap { entry -> (seconds: Double, progress: Double, weight: Double)? in
+            let window = entry.window
             guard let reset = window.resetDate,
                   let duration = window.windowSeconds,
                   duration > 0 else { return nil }
             let seconds = reset.timeIntervalSince(now)
             guard seconds > 0 else { return nil }
             let progress = min(100, max(0, seconds / Double(duration) * 100))
-            return (seconds, progress, min(100, max(0, window.usedPercent)))
+            let weight = QuotaMath.planWeight(entry.plan)
+            guard weight > 0 else { return nil }
+            return (seconds, progress, weight)
         }
-        let weighted = samples.filter { $0.weight > 0 }
         let seconds: Double?
         let progress: Double?
-        if !weighted.isEmpty {
-            let weight = weighted.reduce(0) { $0 + $1.weight }
-            seconds = weighted.reduce(0) { $0 + $1.seconds * $1.weight } / weight
-            progress = weighted.reduce(0) { $0 + $1.progress * $1.weight } / weight
-        } else if !samples.isEmpty {
-            seconds = samples.reduce(0) { $0 + $1.seconds } / Double(samples.count)
-            progress = samples.reduce(0) { $0 + $1.progress } / Double(samples.count)
+        if !samples.isEmpty {
+            let weight = samples.reduce(0) { $0 + $1.weight }
+            seconds = samples.reduce(0) { $0 + $1.seconds * $1.weight } / weight
+            progress = samples.reduce(0) { $0 + $1.progress * $1.weight } / weight
         } else {
             seconds = nil
             progress = nil

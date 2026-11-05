@@ -83,27 +83,28 @@ jobs:
           SHA_PATH="dist/${ZIP_NAME}.sha256"
           SHA256_VALUE="$(awk '{print $1}' "$SHA_PATH")"
 
+          TAG_SUBJECT="$(git tag -l --format='%(contents:subject)' "$TAG" | head -n 1)"
+          TAG_BODY="$(git tag -l --format='%(contents:body)' "$TAG")"
+          TITLE="${CUSTOM_TITLE:-${TAG_SUBJECT:-${TAG}}}"
+          NOTES_FILE="$(mktemp)"
+          if [ -n "$TAG_BODY" ]; then
+            printf "%s\n\n" "$TAG_BODY" > "$NOTES_FILE"
+          fi
+          {
+            echo "### 安装与升级"
+            echo "- 已安装旧版的用户可直接在应用“设置 → 应用更新”中点击检查并一键更新，应用会自动下载校验并重启。"
+            echo "- 也可手动下载 \`${ZIP_NAME}\`，解压后替换 \`/Applications\` 中的应用。"
+            echo "- 适用于 Apple Silicon、macOS 26.2 及以上。安装包采用 ad-hoc 签名，并提供 SHA-256 校验文件。"
+            echo ""
+            echo "### 校验信息"
+            echo "- **文件名**: \`${ZIP_NAME}\`"
+            echo "- **SHA-256**: \`${SHA256_VALUE}\`"
+          } >> "$NOTES_FILE"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP_PATH" "$SHA_PATH" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE"
           else
-            TAG_SUBJECT="$(git tag -l --format='%(contents:subject)' "$TAG" | head -n 1)"
-            TAG_BODY="$(git tag -l --format='%(contents:body)' "$TAG")"
-            TITLE="${CUSTOM_TITLE:-${TAG_SUBJECT:-${TAG}}}"
-            NOTES_FILE="$(mktemp)"
-            if [ -n "$TAG_BODY" ]; then
-              printf "%s\n\n" "$TAG_BODY" > "$NOTES_FILE"
-            fi
-            {
-              echo "### 安装与升级"
-              echo "- 已安装旧版的用户可直接在应用“设置 → 应用更新”中点击检查并一键更新，应用会自动下载校验并重启。"
-              echo "- 也可手动下载 \`${ZIP_NAME}\`，解压后替换 \`/Applications\` 中的应用。"
-              echo "- 适用于 Apple Silicon、macOS 26.2 及以上。安装包采用 ad-hoc 签名，并提供 SHA-256 校验文件。"
-              echo ""
-              echo "### 校验信息"
-              echo "- **文件名**: \`${ZIP_NAME}\`"
-              echo "- **SHA-256**: \`${SHA256_VALUE}\`"
-            } >> "$NOTES_FILE"
-
             if [ -n "$TAG_BODY" ]; then
               gh release create "$TAG" "$ZIP_PATH" "$SHA_PATH" \
                 --title "$TITLE" \

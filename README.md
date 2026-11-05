@@ -35,7 +35,7 @@ Built with native macOS Liquid Glass aesthetics, CPAQuotaBar supports account po
 - **Account Pool Switching**: Switch seamlessly among OpenAI, Gemini, and Claude to view aggregated stats and detailed per-account lists.
 - **Privacy Masking**: One-click masking button beside the pool title to conceal sensitive account emails and identifiers for screenshots and demos.
 - **Quota & Request Statistics**: View remaining percentages, reset countdowns, account tiers, and recent request success rates.
-- **Tier-Weighted Quota Summary**: Pool summary percentage is weighted by actual plan capacity: Plus/Team/Pro counts as 1×, Pro 5× / ProLite / Premium / Ultra-Lite as 5×, Pro 20× / Ultra as 20× (unrecognized tiers fallback to 1×). Account detail rows display their own individual quota percentages.
+- **Tier-Weighted Quota Summary**: Pool summary percentage and reset progress/countdown are weighted by actual plan capacity: Plus/Team/Pro counts as 1×, Pro 5× / ProLite / Premium / Ultra-Lite as 5×, Pro 20× / Ultra as 20× (unrecognized tiers fallback to 1×). Account detail rows display their own individual quota percentages.
 - **Auto-Disable & Auto-Recovery**: Enforce global or per-account remaining quota thresholds to disable exhausted accounts and automatically restore them upon quota reset.
 - **Smart Activity-Based Refresh**: Automatically adjusts refresh intervals based on pool activity; supports instant manual refresh.
 - **Native macOS Design**: Crafted with macOS Liquid Glass, seamlessly adapting to both Light and Dark appearances.
