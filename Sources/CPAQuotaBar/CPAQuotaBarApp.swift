@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let popover = NSPopover()
     private var globalEventMonitor: Any?
     private var localEventMonitor: Any?
+    private var statusCancellables = Set<AnyCancellable>()
 
     private static let statusItemWidth: CGFloat = 76
 
@@ -126,6 +128,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         statusHost = host
         statusItem = item
+
+        // 确保后台 .accessory 未激活状态下 summary 或账号池变化时，强制刷新菜单栏宿主视图与按钮图层
+        model.$summary
+            .combineLatest(model.$selectedPool)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in
+                guard let self else { return }
+                self.statusHost?.rootView = AnyView(
+                    StatusBarLabel(model: self.model)
+                        .frame(width: Self.statusItemWidth - 2, height: 24)
+                        .allowsHitTesting(false)
+                )
+                self.statusHost?.needsLayout = true
+                self.statusHost?.needsDisplay = true
+                self.statusItem?.button?.needsDisplay = true
+            }
+            .store(in: &statusCancellables)
     }
 
     private func configurePopover() {

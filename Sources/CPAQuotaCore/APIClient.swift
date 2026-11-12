@@ -26,11 +26,24 @@ public struct CPAActivitySnapshot: Equatable, Sendable {
     public let success: Int64
     public let failed: Int64
     public let roster: [String]
+    public let activeBuckets: [String]
+    public let updatedMarkers: [String]
+    public let hasRecentTraffic: Bool
 
-    public init(success: Int64, failed: Int64, roster: [String]) {
+    public init(
+        success: Int64,
+        failed: Int64,
+        roster: [String],
+        activeBuckets: [String] = [],
+        updatedMarkers: [String] = [],
+        hasRecentTraffic: Bool = false
+    ) {
         self.success = success
         self.failed = failed
         self.roster = roster
+        self.activeBuckets = activeBuckets
+        self.updatedMarkers = updatedMarkers
+        self.hasRecentTraffic = hasRecentTraffic
     }
 }
 
@@ -414,6 +427,7 @@ private struct NativeAuthFile: Decodable, Sendable {
     var disabled: Bool
     let recentRequests: [RequestBucket]
     let idToken: AuthTokenMetadata?
+    let updatedAt: String?
     let success: Int64
     let failed: Int64
 
@@ -425,6 +439,7 @@ private struct NativeAuthFile: Decodable, Sendable {
         case authIndex = "auth_index"
         case recentRequests = "recent_requests"
         case idToken = "id_token"
+        case updatedAt = "updated_at"
     }
 
     init(from decoder: Decoder) throws {
@@ -443,6 +458,7 @@ private struct NativeAuthFile: Decodable, Sendable {
         disabled = try box.decodeIfPresent(Bool.self, forKey: .disabled) ?? false
         recentRequests = try box.decodeIfPresent([RequestBucket].self, forKey: .recentRequests) ?? []
         idToken = try box.decodeIfPresent(AuthTokenMetadata.self, forKey: .idToken)
+        updatedAt = try box.decodeIfPresent(String.self, forKey: .updatedAt)
         success = try box.decodeIfPresent(Int64.self, forKey: .success)
             ?? recentRequests.reduce(0) { $0 + $1.success }
         failed = try box.decodeIfPresent(Int64.self, forKey: .failed)
@@ -476,11 +492,33 @@ private struct NativeAuthFile: Decodable, Sendable {
     var displayName: String { label ?? email ?? account ?? stableName }
 }
 
+func parseActivitySnapshot(_ data: Data, pool: AccountPoolType) throws -> CPAActivitySnapshot {
+    let files = try JSONDecoder().decode(NativeAuthFilesResponse.self, from: data).files
+    return activitySnapshot(files.filter { $0.matches(pool: pool) })
+}
+
 private func activitySnapshot(_ files: [NativeAuthFile]) -> CPAActivitySnapshot {
-    CPAActivitySnapshot(
-        success: files.reduce(0) { $0 + $1.success },
-        failed: files.reduce(0) { $0 + $1.failed },
-        roster: files.map { $0.stableName + "|" + ($0.disabled ? "1" : "0") }.sorted()
+    let sorted = files.sorted { $0.stableName.localizedCaseInsensitiveCompare($1.stableName) == .orderedAscending }
+    let activeBuckets = sorted.flatMap { file in
+        file.recentRequests.compactMap { bucket -> String? in
+            guard bucket.total > 0 else { return nil }
+            return "\(file.stableName)|\(bucket.time)|\(bucket.success)|\(bucket.failed)"
+        }
+    }
+    let updatedMarkers = sorted.compactMap { file -> String? in
+        guard let updatedAt = file.updatedAt, !updatedAt.isEmpty else { return nil }
+        return "\(file.stableName)|\(updatedAt)"
+    }
+    let hasRecentTraffic = sorted.contains { file in
+        file.recentRequests.suffix(2).contains { $0.total > 0 }
+    }
+    return CPAActivitySnapshot(
+        success: sorted.reduce(0) { $0 + $1.success },
+        failed: sorted.reduce(0) { $0 + $1.failed },
+        roster: sorted.map { $0.stableName + "|" + ($0.disabled ? "1" : "0") },
+        activeBuckets: activeBuckets,
+        updatedMarkers: updatedMarkers,
+        hasRecentTraffic: hasRecentTraffic
     )
 }
 

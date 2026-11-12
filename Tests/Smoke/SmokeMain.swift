@@ -61,6 +61,7 @@ struct CoreSmokeTests {
 
         try! quotaRegressionTests()
         try! antigravityQuotaRegressionTests()
+        try! activitySnapshotRegressionTests()
         print("CPAQuotaCore smoke tests passed")
     }
 
@@ -262,6 +263,46 @@ struct CoreSmokeTests {
             geminiFailedAsExpected = true
         }
         precondition(geminiFailedAsExpected, "Parsing Gemini quota from a Claude-only response must throw an error to trigger next endpoint")
+    }
+
+    static func activitySnapshotRegressionTests() throws {
+        // 1. 滑动窗口总和相同时（旧 10 分钟桶滑出 5 次、新桶新增 5 次），快照仍必须识别出新活动
+        let beforeRollJSON = Data("""
+        {"files":[{"name":"antigravity-a.json","provider":"antigravity","success":5,"failed":0,
+        "updated_at":"2026-11-12T09:00:00Z",
+        "recent_requests":[{"time":"06:50-07:00","success":5,"failed":0},{"time":"09:50-10:00","success":0,"failed":0},{"time":"10:00-10:10","success":0,"failed":0}]}]}
+        """.utf8)
+        let afterRollJSON = Data("""
+        {"files":[{"name":"antigravity-a.json","provider":"antigravity","success":5,"failed":0,
+        "updated_at":"2026-11-12T10:05:00Z",
+        "recent_requests":[{"time":"07:00-07:10","success":0,"failed":0},{"time":"09:50-10:00","success":0,"failed":0},{"time":"10:00-10:10","success":5,"failed":0}]}]}
+        """.utf8)
+        let snap1 = try parseActivitySnapshot(beforeRollJSON, pool: .gemini)
+        let snap2 = try parseActivitySnapshot(afterRollJSON, pool: .gemini)
+        precondition(snap1.success == snap2.success, "rolling totals are equal")
+        precondition(snap1 != snap2, "bucket shift and updated_at must mark activity snapshot changed")
+        precondition(!snap1.hasRecentTraffic && snap2.hasRecentTraffic, "recent bucket traffic detection failed")
+
+        // 2. 完全空闲且仅 0/0 空桶滚动时，不应误触发变化
+        let idle1 = try parseActivitySnapshot(Data("""
+        {"files":[{"name":"antigravity-a.json","provider":"antigravity","success":0,"failed":0,
+        "updated_at":"2026-11-12T08:00:00Z",
+        "recent_requests":[{"time":"09:50-10:00","success":0,"failed":0},{"time":"10:00-10:10","success":0,"failed":0}]}]}
+        """.utf8), pool: .gemini)
+        let idle2 = try parseActivitySnapshot(Data("""
+        {"files":[{"name":"antigravity-a.json","provider":"antigravity","success":0,"failed":0,
+        "updated_at":"2026-11-12T08:00:00Z",
+        "recent_requests":[{"time":"10:00-10:10","success":0,"failed":0},{"time":"10:10-10:20","success":0,"failed":0}]}]}
+        """.utf8), pool: .gemini)
+        precondition(idle1 == idle2, "empty rolling buckets must not trigger false activity")
+
+        // 3. 即使统计未开启（recent_requests 全为 0），updated_at 变化也必须识别活动
+        let updatedOnly = try parseActivitySnapshot(Data("""
+        {"files":[{"name":"antigravity-a.json","provider":"antigravity","success":0,"failed":0,
+        "updated_at":"2026-11-12T10:12:00Z",
+        "recent_requests":[{"time":"10:00-10:10","success":0,"failed":0},{"time":"10:10-10:20","success":0,"failed":0}]}]}
+        """.utf8), pool: .gemini)
+        precondition(idle2 != updatedOnly, "updated_at change must trigger activity detection")
     }
 
 }

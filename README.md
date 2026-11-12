@@ -6,7 +6,7 @@ A native macOS menu bar quota monitor designed to inspect remaining limits and r
 
 Built with native macOS Liquid Glass aesthetics, CPAQuotaBar supports account pool switching, dual-ring quota dials, real-time request statistics, and threshold-based automatic account disabling. The app connects directly to CPA without requiring additional quota plugins or third-party Swift package dependencies.
 
-**Current Version: 0.4.4 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
+**Current Version: 0.4.5 · Apple Silicon · macOS 26.2+ · [MIT License](LICENSE)**
 
 ## Preview
 
@@ -116,7 +116,7 @@ If you turn off auto-disable in Settings and save, the app will attempt to re-en
 
 When the popup panel is closed, a lightweight background tick checks pool activity roughly once per minute. Switching pools displays local cache immediately, followed by a debounced query. The manual refresh icon triggers an immediate upstream fetch.
 
-*Note: Complete refreshes query accounts in parallel. Slow networks or large account pools may take several seconds. A 401/403 authentication error automatically halts background polling until settings are updated.*
+*Note: Complete refreshes query accounts in parallel. Slow networks or large account pools may take several seconds. A 401 authentication error pauses automatic polling until settings or a manual refresh succeeds; temporary 403 responses apply exponential backoff and recover automatically.*
 
 ## Data & Security
 

@@ -49,11 +49,14 @@ final class AppModel: ObservableObject {
     private var currentRefreshTask: Task<Void, Never>?
     private var poolSwitchDebounceTask: Task<Void, Never>?
     private var updatePollingTask: Task<Void, Never>?
+    private var wakeObserver: NSObjectProtocol?
     private var panelVisible = false
     private var authenticationPaused = false
+    private var consecutiveForbiddenCount = 0
+    private var forbiddenBackoffUntil: Date?
     private var managedHolds: [String: Date]
-    private var lastActivitySnapshot: CPAActivitySnapshot?
-    private var lastActivityAt: Date?
+    private var lastActivitySnapshot: [AccountPoolType: CPAActivitySnapshot] = [:]
+    private var lastActivityAt: [AccountPoolType: Date] = [:]
     private var lastQuotaRefreshAt: [AccountPoolType: Date] = [:]
     private let defaults = UserDefaults.standard
 
@@ -64,6 +67,32 @@ final class AppModel: ObservableObject {
     private static let holdsKey = "nativeManagedHolds"
     private static let summaryCacheKey = "lastKnownGoodSummary"
     static let defaultAddress = "http://127.0.0.1:8317"
+
+    private static var instanceKeyPrefix: String {
+        let bundleName = Bundle.main.bundleURL.deletingPathExtension().lastPathComponent
+        guard !bundleName.isEmpty, bundleName != "CPA Quota Bar", bundleName != "CPAQuotaBar" else {
+            return ""
+        }
+        return "instance.\(bundleName)."
+    }
+
+    private static func scopedKey(_ base: String) -> String {
+        instanceKeyPrefix + base
+    }
+
+    private static func loadString(from defaults: UserDefaults, baseKey: String) -> String? {
+        if !instanceKeyPrefix.isEmpty, let scoped = defaults.string(forKey: scopedKey(baseKey)) {
+            return scoped
+        }
+        return defaults.string(forKey: baseKey)
+    }
+
+    private static func loadData(from defaults: UserDefaults, baseKey: String) -> Data? {
+        if !instanceKeyPrefix.isEmpty, let scoped = defaults.data(forKey: scopedKey(baseKey)) {
+            return scoped
+        }
+        return defaults.data(forKey: baseKey)
+    }
 
     static func normalizeAddress(_ input: String) -> String {
         var value = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -78,14 +107,14 @@ final class AppModel: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         let savedSettings = Self.loadSettings(from: defaults)
-        let savedAddress = defaults.string(forKey: Self.addressKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedAddress = Self.loadString(from: defaults, baseKey: Self.addressKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedAddress = (savedAddress?.isEmpty ?? true) ? Self.defaultAddress : savedAddress!
-        let savedPoolRaw = defaults.string(forKey: Self.selectedPoolKey) ?? AccountPoolType.openai.rawValue
+        let savedPoolRaw = Self.loadString(from: defaults, baseKey: Self.selectedPoolKey) ?? AccountPoolType.openai.rawValue
         let resolvedPool = AccountPoolType(rawValue: savedPoolRaw) ?? .openai
 
         selectedPool = resolvedPool
         address = resolvedAddress
-        managementKey = defaults.string(forKey: Self.managementKeyKey) ?? ""
+        managementKey = Self.loadString(from: defaults, baseKey: Self.managementKeyKey) ?? ""
         monitorSettings = savedSettings
         managedHolds = Self.loadHolds(from: defaults)
         overridesText = Self.formatOverrides(savedSettings.accountOverrides)
@@ -94,6 +123,16 @@ final class AppModel: ObservableObject {
         if let cached = Self.loadCachedSummary(from: defaults, address: normalized, pool: resolvedPool) {
             summary = cached
             isShowingCachedFallback = true
+        }
+
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemWake()
+            }
         }
 
         updatePollingTask = Task { [weak self] in
@@ -109,6 +148,9 @@ final class AppModel: ObservableObject {
     }
 
     deinit {
+        if let wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+        }
         pollingTask?.cancel()
         currentRefreshTask?.cancel()
         poolSwitchDebounceTask?.cancel()
@@ -156,10 +198,15 @@ final class AppModel: ObservableObject {
                     let now = Date()
                     let activeInterval = Self.durationSeconds(self.monitorSettings.refreshInterval, fallback: 60)
                     let lastRefresh = self.lastQuotaRefreshAt[self.selectedPool]
-                    if lastRefresh.map({ now.timeIntervalSince($0) >= Double(activeInterval) }) ?? true {
+                    if lastRefresh.map({ now.timeIntervalSince($0) + 0.5 >= Double(activeInterval) }) ?? true {
                         await self.loadStatus()
                     }
                 } else {
+                    if let backoffUntil = self.forbiddenBackoffUntil, backoffUntil > Date() {
+                        let remaining = max(1, UInt64(ceil(backoffUntil.timeIntervalSinceNow)))
+                        try? await Task.sleep(nanoseconds: min(remaining, 60) * 1_000_000_000)
+                        continue
+                    }
                     await self.backgroundTick()
                 }
                 guard !self.authenticationPaused else { return }
@@ -171,14 +218,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func handleSystemWake() {
+        guard !authenticationPaused else { return }
+        forbiddenBackoffUntil = nil
+        restartPolling()
+    }
+
     func setPanelVisible(_ visible: Bool) {
         guard panelVisible != visible else { return }
         panelVisible = visible
         if visible {
+            forbiddenBackoffUntil = nil
+            if pollingTask == nil && !authenticationPaused {
+                start()
+            }
             let now = Date()
             let activeInterval = Self.durationSeconds(monitorSettings.refreshInterval, fallback: 60)
             let lastRefresh = lastQuotaRefreshAt[selectedPool]
-            if lastRefresh.map({ now.timeIntervalSince($0) >= Double(activeInterval) }) ?? true {
+            if lastRefresh.map({ now.timeIntervalSince($0) + 0.5 >= Double(activeInterval) }) ?? true {
                 currentRefreshTask?.cancel()
                 currentRefreshTask = Task { [weak self] in await self?.loadStatus() }
             }
@@ -193,7 +250,7 @@ final class AppModel: ObservableObject {
         currentRefreshTask = nil
 
         selectedPool = pool
-        defaults.set(pool.rawValue, forKey: Self.selectedPoolKey)
+        defaults.set(pool.rawValue, forKey: Self.scopedKey(Self.selectedPoolKey))
         errorMessage = nil
 
         // 2. 立即展示目标池的本地缓存，秒级切换无等待感
@@ -204,7 +261,6 @@ final class AppModel: ObservableObject {
             summary = nil
             isShowingCachedFallback = false
         }
-        lastActivitySnapshot = nil
 
         // 3. 立即查询目标账号池。切换时不再等待固定防抖时间，避免账号池区域暂时无法展开。
         let lastRefresh = lastQuotaRefreshAt[pool]
@@ -290,9 +346,9 @@ final class AppModel: ObservableObject {
             monitorSettings.accountOverrides = try Self.parseOverrides(overridesText)
             address = Self.normalizeAddress(address)
             managementKey = managementKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            defaults.set(address, forKey: Self.addressKey)
-            defaults.set(managementKey, forKey: Self.managementKeyKey)
-            defaults.set(try JSONEncoder().encode(monitorSettings), forKey: Self.settingsKey)
+            defaults.set(address, forKey: Self.scopedKey(Self.addressKey))
+            defaults.set(managementKey, forKey: Self.scopedKey(Self.managementKeyKey))
+            defaults.set(try JSONEncoder().encode(monitorSettings), forKey: Self.scopedKey(Self.settingsKey))
             authenticationPaused = false
             let targetPool = selectedPool
             let result = try await client.fetchStatus(
@@ -323,7 +379,7 @@ final class AppModel: ObservableObject {
         updateState = .checking
         do {
             var request = URLRequest(url: Self.latestReleaseURL)
-            request.setValue("CPAQuotaBar/0.4.4", forHTTPHeaderField: "User-Agent")
+            request.setValue("CPAQuotaBar/0.4.5", forHTTPHeaderField: "User-Agent")
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -394,7 +450,7 @@ final class AppModel: ObservableObject {
 
     private static let latestReleaseURL = URL(string: "https://api.github.com/repos/Joenothing-lst/CPAQuotaBar/releases/latest")!
     private static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.4"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.4.5"
     }
 
     private struct GitHubRelease: Decodable {
@@ -440,13 +496,14 @@ final class AppModel: ObservableObject {
 
     private func backgroundTick() async {
         let now = Date()
+        let pool = selectedPool
         if managedHolds.values.contains(where: { $0 <= now }) {
-            await loadStatus()
+            await loadStatus(for: pool)
             return
         }
 
         let activeFor = Self.durationSeconds(monitorSettings.idleAfter, fallback: 300)
-        let isActive = lastActivityAt.map {
+        let isActive = lastActivityAt[pool].map {
             now.timeIntervalSince($0) < Double(activeFor)
         } ?? false
         let configured = isActive
@@ -454,19 +511,27 @@ final class AppModel: ObservableObject {
             : monitorSettings.idleRefreshInterval
         let fallback: UInt64 = isActive ? 60 : 3_600
         let fullRefreshInterval = Self.durationSeconds(configured, fallback: fallback)
-        let lastRefresh = lastQuotaRefreshAt[selectedPool]
-        if lastRefresh.map({ now.timeIntervalSince($0) >= Double(fullRefreshInterval) }) ?? true {
-            await loadStatus()
+        let lastRefresh = lastQuotaRefreshAt[pool]
+        if lastRefresh.map({ now.timeIntervalSince($0) + 0.5 >= Double(fullRefreshInterval) }) ?? true {
+            await loadStatus(for: pool)
             return
         }
 
         do {
-            let next = try await client.fetchActivitySnapshot(pool: selectedPool)
-            let changed = lastActivitySnapshot.map { $0 != next } ?? false
-            lastActivitySnapshot = next
+            let next = try await client.fetchActivitySnapshot(pool: pool)
+            consecutiveForbiddenCount = 0
+            forbiddenBackoffUntil = nil
+            let previous = lastActivitySnapshot[pool]
+            lastActivitySnapshot[pool] = next
+            let changed: Bool
+            if let previous {
+                changed = previous != next
+            } else {
+                changed = next.hasRecentTraffic
+            }
             if changed {
-                lastActivityAt = now
-                await loadStatus()
+                lastActivityAt[pool] = now
+                await loadStatus(for: pool)
             }
         } catch {
             handleConnectionError(error)
@@ -474,13 +539,18 @@ final class AppModel: ObservableObject {
     }
 
     private func accept(_ result: NativeFetchResult, for pool: AccountPoolType, detectsActivity: Bool) {
-        if detectsActivity,
-           let previous = lastActivitySnapshot,
-           previous != result.activity {
-            lastActivityAt = Date()
+        let now = Date()
+        if detectsActivity {
+            if let previous = lastActivitySnapshot[pool] {
+                if previous != result.activity {
+                    lastActivityAt[pool] = now
+                }
+            } else if result.activity.hasRecentTraffic {
+                lastActivityAt[pool] = now
+            }
         }
-        lastActivitySnapshot = result.activity
-        lastQuotaRefreshAt[pool] = Date()
+        lastActivitySnapshot[pool] = result.activity
+        lastQuotaRefreshAt[pool] = now
         managedHolds = result.managedHolds
         persistHolds()
 
@@ -539,6 +609,13 @@ final class AppModel: ObservableObject {
         // 关键防护 1：永远将数据保存到其真实所属的 pool 缓存中，绝不借用当前动态的 selectedPool
         Self.saveCachedSummary(finalSummary, for: normalizedAddress, pool: pool, to: defaults)
 
+        authenticationPaused = false
+        consecutiveForbiddenCount = 0
+        forbiddenBackoffUntil = nil
+        if pollingTask == nil {
+            start()
+        }
+
         // 关键防护 2：如果在此次网络请求执行期间用户已切到了其他账号池，绝不覆盖当前界面的 summary
         guard pool == selectedPool else {
             return
@@ -549,7 +626,6 @@ final class AppModel: ObservableObject {
 
         let errors = [finalSummary.lastScanError].compactMap { $0 }
         errorMessage = errors.isEmpty ? nil : errors.joined(separator: "；")
-        authenticationPaused = false
     }
 
     private var quotaFallbackMessage: String {
@@ -575,33 +651,44 @@ final class AppModel: ObservableObject {
         if summary != nil {
             isShowingCachedFallback = true
         }
-        if isAuthenticationError(error) {
+        if isUnauthorizedError(error) {
             authenticationPaused = true
             pollingTask?.cancel()
             pollingTask = nil
+        } else if isForbiddenError(error) {
+            // 反向代理共享出口 IP 临时封禁或网关偶发 403 时，采用退避冷却而非永久杀死后台轮询，
+            // 避免临时 403 解除后菜单栏永远不再自动刷新。
+            consecutiveForbiddenCount += 1
+            let backoffSeconds = min(900.0, Double(consecutiveForbiddenCount) * 300.0)
+            forbiddenBackoffUntil = Date().addingTimeInterval(backoffSeconds)
         }
     }
 
-    private func isAuthenticationError(_ error: Error) -> Bool {
+    private func isUnauthorizedError(_ error: Error) -> Bool {
         guard case let CPAError.http(code, _) = error else { return false }
-        return code == 401 || code == 403
+        return code == 401
+    }
+
+    private func isForbiddenError(_ error: Error) -> Bool {
+        guard case let CPAError.http(code, _) = error else { return false }
+        return code == 403
     }
 
     private func persistHolds() {
         let values = managedHolds.mapValues(\.timeIntervalSince1970)
-        if let data = try? JSONEncoder().encode(values) { defaults.set(data, forKey: Self.holdsKey) }
+        if let data = try? JSONEncoder().encode(values) { defaults.set(data, forKey: Self.scopedKey(Self.holdsKey)) }
     }
 
     private static func loadCachedSummary(from defaults: UserDefaults, address: String, pool: AccountPoolType) -> CPASummary? {
-        let key = summaryCacheKey + "_" + pool.rawValue
-        guard let data = defaults.data(forKey: key),
+        let baseKey = summaryCacheKey + "_" + pool.rawValue
+        guard let data = loadData(from: defaults, baseKey: baseKey),
               let envelope = try? JSONDecoder().decode(CachedSummaryEnvelope.self, from: data),
               envelope.address == address else { return nil }
         return envelope.summary.recalculatingQuota()
     }
 
     private static func saveCachedSummary(_ summary: CPASummary, for address: String, pool: AccountPoolType, to defaults: UserDefaults) {
-        let key = summaryCacheKey + "_" + pool.rawValue
+        let key = scopedKey(summaryCacheKey + "_" + pool.rawValue)
         let envelope = CachedSummaryEnvelope(address: address, summary: summary)
         if let data = try? JSONEncoder().encode(envelope) {
             defaults.set(data, forKey: key)
@@ -614,7 +701,7 @@ final class AppModel: ObservableObject {
     }
 
     private static func loadSettings(from defaults: UserDefaults) -> PluginSettings {
-        guard let data = defaults.data(forKey: settingsKey),
+        guard let data = loadData(from: defaults, baseKey: settingsKey),
               let value = try? JSONDecoder().decode(PluginSettings.self, from: data) else {
             return PluginSettings()
         }
@@ -622,7 +709,7 @@ final class AppModel: ObservableObject {
     }
 
     private static func loadHolds(from defaults: UserDefaults) -> [String: Date] {
-        guard let data = defaults.data(forKey: holdsKey),
+        guard let data = loadData(from: defaults, baseKey: holdsKey),
               let values = try? JSONDecoder().decode([String: TimeInterval].self, from: data) else { return [:] }
         return values.mapValues(Date.init(timeIntervalSince1970:))
     }
